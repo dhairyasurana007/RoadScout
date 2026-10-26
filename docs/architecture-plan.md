@@ -28,7 +28,7 @@ RoadScout turns a dashboard-mounted phone into an automatic road inspector: reco
 - **Theme:** "Push the Frontier": giving everyday drivers a new way to monitor and improve physical infrastructure.
 - **Required tech:** Meta's models through the Meta Model API, specifically SAM 3.1 and Muse Spark.
 - **Builder:** an AI product engineer in Centreville, VA, who commutes to Rockville, MD on I-66 and I-495, building on a local machine.
-- **Repo:** [dhairyasurana007/RoadScout](https://github.com/dhairyasurana007/RoadScout), private, empty, no commits yet. `gh` is authenticated as `dhairyasurana007`.
+- **Repo:** [dhairyasurana007/RoadScout](https://github.com/dhairyasurana007/RoadScout), private, `main` branch, set up with the plan, `CLAUDE.md`, the tester and coder agents and the preflight script. `gh` is authenticated as `dhairyasurana007`.
 
 ## System architecture
 
@@ -180,7 +180,7 @@ The MVP is done when you can upload one real commute clip with its GPX file and 
 2. **Needs the key and a real clip:** task 26 (live provider and spike), then the MVP exit check, then tasks 12, 20 and 21, which need live calls and your labels.
 3. **Last:** tasks 23 and 24, and task 25 only if time allows.
 
-- [ ] **0. `chore: preflight and project setup`** A one-time setup and checklist, done by the main agent with you, outside the tester/coder loop because the agents don't exist yet. Keep the checks in a re-runnable script (`scripts/preflight.py`). Report pass or fail for each item, and stop and ask you if anything fails:
+- [x] **0. `chore: preflight and project setup`** A one-time setup and checklist, done by the main agent with you, outside the tester/coder loop because the agents don't exist yet. Keep the checks in a re-runnable script (`scripts/preflight.py`). Report pass or fail for each item, and stop and ask you if anything fails:
   - **GitHub:** `gh auth status` shows `dhairyasurana007` with the `repo` and `workflow` scopes; `gh repo view dhairyasurana007/RoadScout` works; GitHub Actions is enabled on the repo.
   - **Local repo:** this folder is a git repo on `main` with `origin` set to the GitHub repo, and a `.gitignore` covering `.env`, raw video and footage, extracted frames, `node_modules`, virtualenvs and the hidden-tests folder. First commit and push: the plan (as `docs/architecture-plan.md`), `CLAUDE.md` (workflow, hard rules, task list), the agent files and the preflight script.
   - **Sub-agents:** `.claude/agents/tester.md` and `.claude/agents/coder.md` exist, load, and encode their roles from the Agent workflow section, and a smoke dispatch confirms both respond. The hidden-tests folder (`../roadscout-hidden-tests/`) exists outside the repo working tree, and the coder's file tells it never to read it.
