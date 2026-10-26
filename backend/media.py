@@ -22,6 +22,7 @@ class VideoInfo:
     codec: str | None
     width: int | None
     height: int | None
+    stream_index: int | None = None  # ffprobe index of the main video stream (skips cover art)
 
 
 @dataclass
@@ -100,6 +101,7 @@ def probe_video(path: Path) -> VideoInfo:
         codec=stream.get("codec_name"),
         width=stream.get("width"),
         height=stream.get("height"),
+        stream_index=stream.get("index"),
     )
 
 

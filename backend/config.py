@@ -24,6 +24,41 @@ def meta_api_key() -> str | None:
     return os.environ.get("META_API_KEY") or None
 
 
+# --- Preprocessing settings (task 5) ----------------------------------------
+
+DEFAULT_PREPROCESS_FPS = 3.0
+DEFAULT_PREPROCESS_MAX_HEIGHT = 720
+DEFAULT_CHUNK_SECONDS = 10.0
+
+
+def _positive_number(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
+    if not value > 0 or value == float("inf"):
+        raise ValueError(f"{name} must be a positive number, got {raw!r}")
+    return value
+
+
+def preprocess_fps() -> float:
+    """Sampled frames per second. Set ROADSCOUT_PREPROCESS_FPS (default 3; the task 26 spike tunes it)."""
+    return _positive_number("ROADSCOUT_PREPROCESS_FPS", DEFAULT_PREPROCESS_FPS)
+
+
+def preprocess_max_height() -> int:
+    """Maximum output height in pixels (never upscales). Set ROADSCOUT_PREPROCESS_MAX_HEIGHT (default 720)."""
+    return int(_positive_number("ROADSCOUT_PREPROCESS_MAX_HEIGHT", DEFAULT_PREPROCESS_MAX_HEIGHT))
+
+
+def chunk_seconds() -> float:
+    """Target chunk length in seconds. Set ROADSCOUT_CHUNK_SECONDS (default 10)."""
+    return _positive_number("ROADSCOUT_CHUNK_SECONDS", DEFAULT_CHUNK_SECONDS)
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0
