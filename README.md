@@ -75,9 +75,19 @@ cd frontend
 npx playwright test
 ```
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push and pull request with two jobs:
+
+- `pytest`: installs ffmpeg and `requirements.txt`, then runs `python -m pytest`.
+- `playwright`: `npm ci` in `frontend/`, installs Chromium, runs `npx playwright test`, and uploads the report and traces as an artifact if the run fails.
+
+The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and recorded fixtures once they exist). It uses no secrets and never calls the live Meta API; live calls happen only in manual runs on your machine.
+
 ## Layout
 
 - `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
+- `.github/workflows/ci.yml` CI (pytest and Playwright)
 - `docs/architecture-plan.md` the plan; `scripts/preflight.py` environment checks
