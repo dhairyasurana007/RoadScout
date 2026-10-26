@@ -26,12 +26,15 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
+      # A static build avoids apt, whose Azure mirror stalled for 15 minutes on the task 5 run.
       - name: Install ffmpeg
+        timeout-minutes: 5
+        uses: FedericoCarboni/setup-ffmpeg@v3.1
+      - name: Check ffmpeg
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
           ffmpeg -version
           ffprobe -version
+          ffmpeg -hide_banner -encoders | grep -E "libx264|libx265"
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
       - name: Run pytest
