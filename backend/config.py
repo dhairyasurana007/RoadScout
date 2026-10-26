@@ -59,6 +59,16 @@ def chunk_seconds() -> float:
     return _positive_number("ROADSCOUT_CHUNK_SECONDS", DEFAULT_CHUNK_SECONDS)
 
 
+# --- Detection settings (task 7) --------------------------------------------
+
+
+def hazard_prompts_path() -> Path:
+    """JSON file holding the SAM 3.1 hazard class prompts.
+    Set ROADSCOUT_HAZARD_PROMPTS (default: config/hazard_prompts.json)."""
+    raw = (os.environ.get("ROADSCOUT_HAZARD_PROMPTS") or "").strip()
+    return Path(raw) if raw else ROOT / "config" / "hazard_prompts.json"
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0

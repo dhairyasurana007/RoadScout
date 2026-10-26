@@ -22,6 +22,35 @@ CREATE TABLE IF NOT EXISTS drives (
 """
 
 
+# Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
+# frame_index is the global frame index and frame_timestamp the global time in seconds from the
+# source video start (both from frame_timestamps.json); frame_in_chunk is the position inside the
+# chunk file. track_id is the id the provider gave inside that chunk and track_key is
+# "<chunk>:<track_id>", unique across the drive because tracks never span chunks here.
+# box is JSON [x1, y1, x2, y2] in chunk pixels; mask is the RLE dict as JSON text, or NULL.
+# No foreign key to drives: the table is a raw log keyed by drive id.
+DETECTIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS detections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    drive_id TEXT NOT NULL,
+    chunk INTEGER NOT NULL,
+    frame_index INTEGER NOT NULL,
+    frame_in_chunk INTEGER NOT NULL,
+    frame_timestamp REAL NOT NULL,
+    hazard_class TEXT NOT NULL,
+    class_prompt TEXT NOT NULL,
+    track_id INTEGER NOT NULL,
+    track_key TEXT NOT NULL,
+    box TEXT NOT NULL,
+    mask TEXT,
+    score REAL NOT NULL
+)
+"""
+DETECTIONS_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_detections_drive ON detections (drive_id, chunk, frame_index)"
+)
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     conn = sqlite3.connect(str(path if path is not None else db_path()))
@@ -43,6 +72,8 @@ def init_db(path: Path | str | None = None) -> Path:
             "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('schema_version', '1')"
         )
         conn.execute(DRIVES_SCHEMA)
+        conn.execute(DETECTIONS_SCHEMA)
+        conn.execute(DETECTIONS_INDEX)
         conn.commit()
     finally:
         conn.close()

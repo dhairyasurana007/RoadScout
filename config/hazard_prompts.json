@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "classes": {
+    "pothole": [
+      "pothole",
+      "pothole in the road surface",
+      "hole in the asphalt"
+    ],
+    "debris in lane": [
+      "debris in lane",
+      "object lying on the road",
+      "tire fragment or road debris"
+    ],
+    "damaged guardrail": [
+      "damaged guardrail",
+      "bent or broken guardrail",
+      "collapsed guard rail"
+    ],
+    "fallen or damaged sign": [
+      "fallen or damaged sign",
+      "knocked over road sign",
+      "bent traffic sign"
+    ],
+    "faded lane markings": [
+      "faded lane markings",
+      "worn lane line",
+      "barely visible road paint"
+    ]
+  }
+}

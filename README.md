@@ -113,6 +113,25 @@ pos = track.position_at(12.5)               # also GpxTrack.from_drive_id(drive_
 - Latitude and longitude are linearly interpolated by time. Speed uses `<speed>` tags (m/s) when both neighbouring points have one, otherwise haversine distance over time for the surrounding segment. Heading is the direction of travel of that segment; while stationary (under 0.5 m per segment) the last heading is kept.
 - A time before the first or after the last point raises `GpxRangeError` (a `ValueError`) unless `clamp=True`, which returns the first or last point.
 
+## SAM 3.1 detection per chunk
+
+`backend/detection.py` sends every preprocessed chunk to the model provider (`get_provider()`, so the fake provider unless `ROADSCOUT_PROVIDER` says otherwise) with the hazard class prompts, and stores the raw boxes, masks and track IDs in the `detections` table:
+
+```python
+from backend.preprocess import preprocess_video
+from backend.detection import run_detection, load_detections
+
+result = preprocess_video("drive.mov", "data/work/drive-1")
+summary = run_detection("drive-1", result)       # also accepts frame_timestamps.json or a list of Chunk
+rows = load_detections("drive-1")                # dicts; box is a list, mask a decoded RLE dict or None
+```
+
+- **Prompts** live in `config/hazard_prompts.json` (override the path with `ROADSCOUT_HAZARD_PROMPTS`): five classes (pothole, debris in lane, damaged guardrail, fallen or damaged sign, faded lane markings), each with a list of phrasings. The first phrasing of each class is the one sent, so to swap one, move it to the front. The file is validated on load (`PromptConfigError`, a `ValueError`, for a bad file). All five prompts go in one `detect` call per chunk.
+- **Table `detections`**: `id`, `drive_id`, `chunk`, `frame_index` (global), `frame_in_chunk`, `frame_timestamp` (global seconds from the source video start), `hazard_class`, `class_prompt`, `track_id` (the provider's id, unique only inside its chunk), `track_key` (`"<chunk>:<track_id>"`, unique across the drive), `box` (JSON `[x1, y1, x2, y2]`), `mask` (RLE dict as JSON text, or NULL) and `score`.
+- **Ids and times**: the provider counts frames from 0 in each chunk; `frame_index` = the chunk's `start_frame` + that, and `frame_timestamp` comes from `frame_timestamps.json` for that global index.
+- **Empty results** are success and add no rows.
+- **Idempotent and all-or-nothing**: a run gathers every chunk's detections first, then replaces the drive's old rows in a single transaction. If the provider fails on any chunk (after its own retries), `DetectionError` (a `ProviderError`; `chunk_index`, `chunk_path`, original error as `__cause__`) is raised, nothing is written and the drive's earlier detections stay as they were.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -139,7 +158,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
