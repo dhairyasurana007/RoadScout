@@ -5,6 +5,23 @@ from pathlib import Path
 from backend.config import db_path
 
 
+# One row per uploaded drive. video_path and gpx_path are storage keys (see backend/storage.py).
+# clock_offset_seconds is added to video time to get GPX time (applied in task 6).
+DRIVES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS drives (
+    id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    started_at_source TEXT NOT NULL,
+    clock_offset_seconds REAL NOT NULL DEFAULT 0,
+    video_path TEXT NOT NULL,
+    gpx_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    duration_seconds REAL,
+    created_at TEXT NOT NULL
+)
+"""
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     conn = sqlite3.connect(str(path if path is not None else db_path()))
@@ -25,6 +42,7 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(
             "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('schema_version', '1')"
         )
+        conn.execute(DRIVES_SCHEMA)
         conn.commit()
     finally:
         conn.close()

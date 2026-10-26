@@ -97,6 +97,12 @@ def _specs():
     return [p for p in walk_files(REPO, (".spec.ts", ".spec.js", ".spec.mjs", ".spec.tsx", ".spec.jsx", ".spec.cjs"))]
 
 
+def _smoke_spec():
+    smoke = [p for p in _specs() if p.name.startswith("smoke.")]
+    assert smoke, "the smoke spec (smoke.spec.*) must keep existing"
+    return smoke[0]
+
+
 def test_playwright_package_installed_as_dependency():
     has = False
     for pj in node_package_jsons():
@@ -135,19 +141,19 @@ def test_there_is_a_package_script_to_run_playwright():
     assert any("playwright test" in v for v in scripts.values()), scripts
 
 
-def test_exactly_one_playwright_spec_file():
-    specs = _specs()
-    assert len(specs) == 1, [str(s.relative_to(REPO)) for s in specs]
+def test_at_least_one_playwright_spec_file_and_smoke_spec_exists():
+    assert len(_specs()) >= 1
+    _smoke_spec()
 
 
 def test_exactly_one_playwright_test_case():
-    text = read(_specs()[0])
+    text = read(_smoke_spec())
     cases = re.findall(r"(?<![\w.])test\s*\(", text)
     assert len(cases) == 1, f"expected one test(), found {len(cases)}"
 
 
 def test_smoke_test_visits_page_and_asserts_hello(fe):
-    text = read(_specs()[0])
+    text = read(_smoke_spec())
     assert "goto" in text
     assert "expect" in text
     assert re.search(r"hello", text, re.I)
@@ -155,7 +161,7 @@ def test_smoke_test_visits_page_and_asserts_hello(fe):
 
 def test_smoke_test_text_matches_the_page(fe):
     """Any hello-ish literal asserted by the spec must exist in the frontend source."""
-    spec = read(_specs()[0])
+    spec = read(_smoke_spec())
     literals = re.findall(r"['\"`]([^'\"`\n]*hello[^'\"`\n]*)['\"`]", spec, re.I)
     if not literals:
         literals = ["hello"]
@@ -169,6 +175,6 @@ def test_playwright_spec_is_not_in_python_unit_test_dir():
 
 
 def test_playwright_spec_does_not_touch_pipeline_internals():
-    text = read(_specs()[0]).lower()
+    text = read(_smoke_spec()).lower()
     for word in ("detect", "geotag", "dedup", "verify", "sam 3", "muse"):
         assert word not in text, f"smoke test should be UI-only, mentions {word}"

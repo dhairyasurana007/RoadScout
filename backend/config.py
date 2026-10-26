@@ -14,6 +14,11 @@ def db_path() -> Path:
     return Path(os.environ.get("ROADSCOUT_DB", ROOT / "data" / "roadscout.sqlite"))
 
 
+def storage_dir() -> Path:
+    """Where LocalDiskStorage keeps uploaded files. Override with ROADSCOUT_STORAGE_DIR."""
+    return Path(os.environ.get("ROADSCOUT_STORAGE_DIR") or ROOT / "data" / "storage")
+
+
 def meta_api_key() -> str | None:
     """The Meta API key, or None when unset. Never log or print this value."""
     return os.environ.get("META_API_KEY") or None
