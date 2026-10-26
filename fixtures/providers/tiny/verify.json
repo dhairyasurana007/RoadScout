@@ -1,0 +1,11 @@
+{
+ "is_hazard": true,
+ "hazard_class": "pothole",
+ "severity": 2,
+ "lane": "center",
+ "confidence": 0.9,
+ "reason": "Clear pothole in the center lane.",
+ "report_description": "A pothole in the center lane.",
+ "model": "recorded-muse-spark-synthetic",
+ "prompt_version": "v1"
+}
