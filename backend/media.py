@@ -64,18 +64,22 @@ def probe_video(path: Path) -> VideoInfo:
         raise ProbeUnavailable("ffprobe is not installed or not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise InvalidMedia("Video could not be read (ffprobe timed out)") from exc
-    if result.returncode != 0:
-        raise InvalidMedia("File is not a readable video")
+    reason = (result.stderr or "").strip().splitlines()
+    detail = f" ({reason[-1][:200]})" if reason else ""
     try:
         data = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise InvalidMedia("File is not a readable video") from exc
+        raise InvalidMedia(f"File is not a readable video{detail}") from exc
 
+    # Some ffprobe builds exit non-zero on a trailing demuxer warning (seen with MPEG-TS) while
+    # still reporting the streams, so judge the file by what it reports, not by the exit code.
     streams = [
         s for s in data.get("streams", [])
         if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
     ]
     if not streams:
+        if result.returncode != 0:
+            raise InvalidMedia(f"File is not a readable video{detail}")
         raise InvalidMedia("File has no video stream")
     stream = streams[0]
     fmt = data.get("format", {})
