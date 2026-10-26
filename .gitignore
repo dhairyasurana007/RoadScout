@@ -1,0 +1,50 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Footage, frames and real GPS tracks (privacy: never commit)
+*.mov
+*.mp4
+*.m4v
+*.hevc
+*.avi
+*.mkv
+*.gpx
+!tests/fixtures/*.gpx
+footage/
+frames/
+storage/
+data/
+spike/footage/
+*.sqlite
+*.sqlite3
+*.db
+
+# Hidden tester tests live outside the repo; guard against a stray copy
+roadscout-hidden-tests/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / frontend
+node_modules/
+dist/
+playwright-report/
+test-results/
+blob-report/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
