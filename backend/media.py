@@ -65,7 +65,7 @@ def probe_video(path: Path) -> VideoInfo:
     except subprocess.TimeoutExpired as exc:
         raise InvalidMedia("Video could not be read (ffprobe timed out)") from exc
     reason = (result.stderr or "").strip().splitlines()
-    detail = f" ({reason[-1][:200]})" if reason else ""
+    detail = f" ({reason[-1][:200]})" if reason else f" (ffprobe exit {result.returncode}, stdout {result.stdout[:120]!r})"
     try:
         data = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
