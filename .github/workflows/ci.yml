@@ -26,15 +26,22 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
-      # A static build avoids apt, whose Azure mirror stalled for 15 minutes on the task 5 run.
+      # The Ubuntu mirror stalled for 15 minutes once, so each attempt is time-limited and retried.
+      # apt keeps the packages it already downloaded, so retries resume instead of starting over.
+      # Do not switch to a static ffmpeg build: its ffprobe segfaulted on the MPEG-TS test clip.
       - name: Install ffmpeg
-        timeout-minutes: 5
-        uses: FedericoCarboni/setup-ffmpeg@v3.1
-      - name: Check ffmpeg
+        timeout-minutes: 10
         run: |
+          sudo apt-get update
+          for attempt in 1 2 3 4; do
+            if timeout 150 sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 ffmpeg; then
+              break
+            fi
+            if [ "$attempt" = 4 ]; then exit 1; fi
+            echo "apt install attempt $attempt did not finish; retrying"
+          done
           ffmpeg -version
           ffprobe -version
-          ffmpeg -hide_banner -encoders | grep -E "libx264|libx265"
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
       - name: Run pytest
