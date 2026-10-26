@@ -92,6 +92,27 @@ One ffmpeg pass applies rotation metadata, strips audio and all other non-video 
 
 The result has `chunks` (index, path, start_frame, frame_count, start_time, end_time), `frame_timestamps_path`, `fps`, `width`, `height`, `duration_seconds` and `frame_count`. Defaults can be set with `ROADSCOUT_PREPROCESS_FPS` (3), `ROADSCOUT_CHUNK_SECONDS` (10) and `ROADSCOUT_PREPROCESS_MAX_HEIGHT` (720). Bad input raises `InvalidMedia`, a missing ffmpeg raises `FfmpegUnavailable`, and an ffmpeg failure raises `PreprocessError`. The full format is documented in the module docstring.
 
+## GPX position lookup
+
+`backend/gpx_track.py` parses the drive's GPX and answers "where was the car at video second N?":
+
+```python
+from backend.gpx_track import GpxTrack, GpxRangeError, parse_gpx
+
+track = parse_gpx("track.gpx")                # same as GpxTrack.from_file
+pos = track.position_at(12.5, video_start=started_at, clock_offset_seconds=0.0)
+many = track.positions_at([0, 0.33, 0.67], video_start=started_at)
+
+track = GpxTrack.from_drive(drive_record)   # drive dict or sqlite row; remembers started_at and offset
+pos = track.position_at(12.5)               # also GpxTrack.from_drive_id(drive_id) to load from the database
+```
+
+- `pos` is a `TrackPosition` with `latitude`, `longitude` (degrees), `speed_mps` (metres per second), `heading_deg` (0 up to but not including 360, 0 = north, clockwise) and `timestamp` (timezone-aware UTC datetime on the GPX clock).
+- GPX time = `video_start` + `clock_offset_seconds` + `video_seconds` (naive datetimes are taken as UTC). For a track from `from_drive`, `video_start` and the offset default to the drive's values; explicit arguments override them.
+- Parsing streams the file (`iterparse`), ignores XML namespaces, merges all tracks and segments, accepts fractional seconds and any UTC offset, sorts points by time and drops points that repeat an earlier timestamp. Points without a usable time are skipped; a file with none raises `GpxError` (a `ValueError`).
+- Latitude and longitude are linearly interpolated by time. Speed uses `<speed>` tags (m/s) when both neighbouring points have one, otherwise haversine distance over time for the surrounding segment. Heading is the direction of travel of that segment; while stationary (under 0.5 m per segment) the last heading is kept.
+- A time before the first or after the last point raises `GpxRangeError` (a `ValueError`) unless `clamp=True`, which returns the first or last point.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -118,7 +139,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
