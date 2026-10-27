@@ -326,27 +326,38 @@ def blur_image(
     if src.resolve() == dst.resolve():
         raise PrivacyError("dst_path must be a different file than the source image")
     image = _read_image(src)
-    height, width = image.shape[:2]
-    if masks is None or isinstance(masks, (str, bytes)):
-        raise InvalidMask("masks must be a list of masks")
-    if isinstance(masks, (Mapping, np.ndarray)) or hasattr(masks, "box"):
-        masks = [masks]  # a single mask given without a list
-    try:
-        arrays = [_mask_array(m, width, height) for m in masks]  # validates every mask before writing
-    except TypeError:
-        raise InvalidMask("masks must be a list of masks") from None
-
-    union = np.zeros((height, width), dtype=bool)
-    for arr in arrays:
-        union |= _fit_mask(arr, width, height)
+    union, mask_count = _union_of(masks, image.shape[1], image.shape[0])
 
     if not union.any():  # nothing to blur: an unchanged copy of the file
         if src.suffix.lower() == dst.suffix.lower():
             _write_bytes(dst, src.read_bytes())
         else:
             _write_image(dst, image)
-        return BlurResult(dst, len(arrays), 0)
+        return BlurResult(dst, mask_count, 0)
 
+    out, blurred_pixels = _blur_union(image, union, dilate)
+    _write_image(dst, out)
+    return BlurResult(dst, mask_count, blurred_pixels)
+
+
+def _union_of(masks: Iterable[Any], width: int, height: int) -> tuple[np.ndarray, int]:
+    """Validate every mask and return (union as a (height, width) bool array, number of masks)."""
+    if masks is None or isinstance(masks, (str, bytes)):
+        raise InvalidMask("masks must be a list of masks")
+    if isinstance(masks, (Mapping, np.ndarray)) or hasattr(masks, "box"):
+        masks = [masks]  # a single mask given without a list
+    try:
+        arrays = [_mask_array(m, width, height) for m in masks]  # validates every mask before anything is written
+    except TypeError:
+        raise InvalidMask("masks must be a list of masks") from None
+    union = np.zeros((height, width), dtype=bool)
+    for arr in arrays:
+        union |= _fit_mask(arr, width, height)
+    return union, len(arrays)
+
+
+def _blur_union(image: np.ndarray, union: np.ndarray, dilate: int) -> tuple[np.ndarray, int]:
+    """Blur the (non-empty) union area of an image, grown by ``dilate`` pixels. Returns (new image, pixels blurred)."""
     area = union.astype(np.uint8)
     if dilate > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * dilate + 1, 2 * dilate + 1))
@@ -359,8 +370,22 @@ def blur_image(
         patch = _blur_area(image[y:y + h, x:x + w])
         region = out[y:y + h, x:x + w]
         region[inside] = patch[inside]
-    _write_image(dst, out)
-    return BlurResult(dst, len(arrays), int(area.sum()))
+    return out, int(area.sum())
+
+
+def blur_frame(frame: np.ndarray, masks: Iterable[Any], *, dilate_px: int = 0) -> np.ndarray:
+    """Blur the masked areas of one in-memory frame (a (height, width, 3) uint8 array, e.g. BGR) and return a NEW
+    array of the same shape; ``frame`` is never modified. Same masks, validation, union, scaling, dilation and blur
+    as ``blur_image`` (which shares this implementation), so an invalid mask raises ``InvalidMask`` and no
+    masks / empty masks give an unchanged copy. Used by the video export (task 22)."""
+    dilate = _resolve_dilate(dilate_px)
+    if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8 \
+            or frame.shape[0] < 1 or frame.shape[1] < 1:
+        raise PrivacyError("frame must be a non-empty (height, width, 3) uint8 array")
+    union, _ = _union_of(masks, frame.shape[1], frame.shape[0])
+    if not union.any():
+        return frame.copy()
+    return _blur_union(frame, union, dilate)[0]
 
 
 # ----- candidates --------------------------------------------------------------------------

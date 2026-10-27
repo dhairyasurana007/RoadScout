@@ -243,6 +243,31 @@ def blur_dilate_px() -> int:
     return int(value)
 
 
+# --- Annotated video export settings (task 22) ------------------------------
+
+DEFAULT_EXPORT_PRE_SECONDS = 4.0
+DEFAULT_EXPORT_POST_SECONDS = 4.0
+DEFAULT_EXPORT_MAX_SECONDS = 20.0
+
+
+def export_pre_seconds() -> float:
+    """Seconds of video before the hazard's best frame that an export includes. Set ROADSCOUT_EXPORT_BEFORE_SECONDS
+    to a number from 0 to 3600 (default 4); an invalid value raises ValueError. Read at call time."""
+    return _bounded_number("ROADSCOUT_EXPORT_BEFORE_SECONDS", DEFAULT_EXPORT_PRE_SECONDS, 0.0, 3600.0)
+
+
+def export_post_seconds() -> float:
+    """Seconds of video after the hazard's best frame that an export includes. Set ROADSCOUT_EXPORT_AFTER_SECONDS
+    to a number from 0 to 3600 (default 4); an invalid value raises ValueError. Read at call time."""
+    return _bounded_number("ROADSCOUT_EXPORT_AFTER_SECONDS", DEFAULT_EXPORT_POST_SECONDS, 0.0, 3600.0)
+
+
+def export_max_seconds() -> float:
+    """Hard cap on the length of one exported clip in seconds. Set ROADSCOUT_EXPORT_MAX_SECONDS to a number
+    from 0.1 to 3600 (default 20); an invalid value raises ValueError. Read at call time."""
+    return _bounded_number("ROADSCOUT_EXPORT_MAX_SECONDS", DEFAULT_EXPORT_MAX_SECONDS, 0.1, 3600.0)
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0

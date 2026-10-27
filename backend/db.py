@@ -259,6 +259,29 @@ CANDIDATES_HAZARD_INDEX = (
 )
 
 
+# Registry of annotated video exports (task 22, written by backend/export.py). One row per export attempt that
+# got as far as running (refusals such as an unknown hazard write nothing). No foreign keys: exports are blurred
+# demo artefacts that outlive the video deletion of their drive, and a hazard row may be rewritten by deduplication.
+#   key             storage-relative path of the mp4, "<drive id>/exports/<name>.mp4"; NULL when status is failed
+#   start_seconds   exported window in source video seconds (the clipped window that was actually cut)
+#   status          'ok' or 'failed' (fail closed: a failed row has no file)
+#   error           NULL when ok, else one short line without filesystem paths
+EXPORTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS exports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    drive_id TEXT NOT NULL,
+    hazard_id INTEGER,
+    start_seconds REAL NOT NULL,
+    end_seconds REAL NOT NULL,
+    key TEXT,
+    status TEXT NOT NULL CHECK (status IN ('ok', 'failed')),
+    error TEXT,
+    created_at TEXT NOT NULL
+)
+"""
+EXPORTS_INDEX = "CREATE INDEX IF NOT EXISTS idx_exports_hazard ON exports (hazard_id, created_at)"
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     # A generous busy timeout: concurrent writers (review clicks, a pipeline run) wait for the lock.
@@ -311,6 +334,8 @@ def init_db(path: Path | str | None = None) -> Path:
         _add_missing_columns(conn, "hazards", HAZARDS_FIX_COLUMNS)
         conn.execute(HAZARDS_INDEX)
         conn.execute(CANDIDATES_HAZARD_INDEX)
+        conn.execute(EXPORTS_SCHEMA)
+        conn.execute(EXPORTS_INDEX)
         conn.commit()
     finally:
         conn.close()
