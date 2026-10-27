@@ -194,7 +194,7 @@ The MVP is done when you can upload one real commute clip with its GPX file and 
 - [x] **6. `feat: GPX parsing and position lookup`** Parse the track and return interpolated latitude, longitude, speed and heading for any video timestamp, applying the clock offset from task 4.
 - [x] **7. `feat: SAM 3.1 detection per chunk`** Send each chunk with the hazard class prompts from a config file; store raw boxes, masks and track IDs. Calls SAM 3.1 through the provider interface from task 3.
 - [x] **8. `feat: track aggregation and best-frame selection`** One candidate per tracked object; drop short tracks; pick the best frame; geotag it.
-- [ ] **9. `feat: Muse Spark verification`** Structured JSON verdict per candidate (real, class, severity, lane, confidence, reason), with model and prompt version stored on each verdict. Calls Muse Spark through the provider interface from task 3.
+- [x] **9. `feat: Muse Spark verification`** Structured JSON verdict per candidate (real, class, severity, lane, confidence, reason), with model and prompt version stored on each verdict. Calls Muse Spark through the provider interface from task 3.
 - [ ] **10. `feat: pipeline runner`** Run tasks 5 to 9 as one background job, update drive status, record errors.
 - [ ] **11. `feat: minimal results page`** Extend the upload page (task 4) with live drive status and a list of verified hazards with photo, class, severity and location. The photos are unblurred until task 15, so this page stays local.
 - [ ] **12. `feat: eval script v0`** Read the hand labels (time ranges inside full drives) for a few segments, compute precision and recall per class, print a table.
