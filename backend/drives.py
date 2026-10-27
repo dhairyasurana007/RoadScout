@@ -4,10 +4,17 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from backend.db import get_connection, init_db
 from backend.media import InvalidMedia, ProbeUnavailable, parse_gpx, probe_video
+from backend.pipeline import (
+    DriveBusyError,
+    DriveNotFoundError,
+    claim_drive,
+    run_pipeline_in_background,
+)
+from backend.providers import ModelProvider
 from backend.storage import Storage, get_storage
 
 router = APIRouter(prefix="/api/drives", tags=["drives"])
@@ -85,11 +92,11 @@ def create_drive(
         try:
             conn.execute(
                 "INSERT INTO drives (id, started_at, started_at_source, clock_offset_seconds,"
-                " video_path, gpx_path, status, duration_seconds, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " video_path, gpx_path, status, duration_seconds, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     drive_id, started_at.isoformat(), source, offset, video_key, gpx_key,
-                    STATUS_UPLOADED, video_info.duration_seconds, now.isoformat(),
+                    STATUS_UPLOADED, video_info.duration_seconds, now.isoformat(), now.isoformat(),
                 ),
             )
             conn.commit()
@@ -99,6 +106,35 @@ def create_drive(
     except BaseException:
         storage.delete_drive(drive_id)
         raise
+    return _row_to_drive(row)
+
+
+def get_pipeline_provider() -> ModelProvider | None:
+    """The provider the process route hands to the pipeline. None means "use get_provider()"
+    (ROADSCOUT_PROVIDER, fake by default). FastAPI dependency; override it in tests."""
+    return None
+
+
+@router.post("/{drive_id}/process", status_code=202)
+def process_drive(
+    drive_id: str,
+    background_tasks: BackgroundTasks,
+    storage: Storage = Depends(get_storage),
+    provider: ModelProvider | None = Depends(get_pipeline_provider),
+) -> dict:
+    """Start the pipeline (preprocess, detect, aggregate, verify) for a drive as a background job.
+
+    Returns 202 with the drive record (status processing, stage queued) straight away; poll
+    GET /api/drives/{id} for progress. 404 for an unknown drive, 409 if it is already processing.
+    A finished or failed drive can be processed again; its results are replaced.
+    """
+    try:
+        row = claim_drive(drive_id)
+    except DriveNotFoundError:
+        raise HTTPException(404, "Drive not found") from None
+    except DriveBusyError:
+        raise HTTPException(409, "Drive is already processing") from None
+    background_tasks.add_task(run_pipeline_in_background, drive_id, storage=storage, provider=provider)
     return _row_to_drive(row)
 
 

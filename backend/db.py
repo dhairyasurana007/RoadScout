@@ -17,9 +17,30 @@ CREATE TABLE IF NOT EXISTS drives (
     gpx_path TEXT NOT NULL,
     status TEXT NOT NULL,
     duration_seconds REAL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    stage TEXT,
+    error TEXT,
+    failed_stage TEXT,
+    updated_at TEXT,
+    finished_at TEXT
 )
 """
+
+# Columns added to drives by the pipeline runner (task 10). init_db adds any that an older
+# database lacks (ALTER TABLE ... ADD COLUMN), so existing databases keep working.
+#   stage         current pipeline stage: queued, preprocessing, detecting, aggregating,
+#                 verifying, done or failed; NULL until a run is requested
+#   error         "<stage>: <message>" of the last failed run; NULL on success and while running
+#   failed_stage  the stage that raised, set only when stage is 'failed'
+#   updated_at    UTC ISO time of the last status or stage change
+#   finished_at   UTC ISO time the last run ended (done or failed); NULL while running
+DRIVES_PIPELINE_COLUMNS = {
+    "stage": "TEXT",
+    "error": "TEXT",
+    "failed_stage": "TEXT",
+    "updated_at": "TEXT",
+    "finished_at": "TEXT",
+}
 
 
 # Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
@@ -125,6 +146,20 @@ def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _add_missing_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    """Idempotent migration: add each column the table does not have yet."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in columns.items():
+        if name in existing:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        except sqlite3.OperationalError as exc:
+            # Another connection added it between our check and the ALTER.
+            if "duplicate column" not in str(exc).lower():
+                raise
+
+
 def init_db(path: Path | str | None = None) -> Path:
     """Create the database file, its parent folder and base tables. Safe to call repeatedly."""
     target = Path(path if path is not None else db_path())
@@ -138,6 +173,7 @@ def init_db(path: Path | str | None = None) -> Path:
             "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('schema_version', '1')"
         )
         conn.execute(DRIVES_SCHEMA)
+        _add_missing_columns(conn, "drives", DRIVES_PIPELINE_COLUMNS)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)
