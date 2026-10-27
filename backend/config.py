@@ -146,6 +146,42 @@ def verify_min_confidence() -> float:
     return value
 
 
+# --- Deduplication settings (task 14) ---------------------------------------
+
+DEFAULT_DEDUP_DISTANCE_M = 25.0
+DEFAULT_DEDUP_HEADING_TOLERANCE_DEG = 45.0
+
+
+def _bounded_number(name: str, default: float, low: float, high: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number from {low:g} to {high:g}, got {raw!r}") from None
+    if not low <= value <= high:  # also rejects NaN
+        raise ValueError(f"{name} must be a number from {low:g} to {high:g}, got {raw!r}")
+    return value
+
+
+def dedup_distance_m() -> float:
+    """Largest distance in metres between two candidates of one hazard (inclusive). Set
+    ROADSCOUT_DEDUP_DISTANCE_M to a number of 0 or more (default 25); an invalid value raises
+    ValueError. Read at call time."""
+    return _bounded_number("ROADSCOUT_DEDUP_DISTANCE_M", DEFAULT_DEDUP_DISTANCE_M, 0.0, 1e7)
+
+
+def dedup_heading_tolerance_deg() -> float:
+    """Largest difference in direction of travel in degrees between two candidates of one hazard
+    (inclusive, wrap-around aware, so 350 and 10 differ by 20). Set
+    ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG to a number from 0 to 180 (default 45; 180 ignores direction
+    for candidates that have a heading); an invalid value raises ValueError. Read at call time."""
+    return _bounded_number(
+        "ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG", DEFAULT_DEDUP_HEADING_TOLERANCE_DEG, 0.0, 180.0
+    )
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0

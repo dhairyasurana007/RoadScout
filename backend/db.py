@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS drives (
 # Columns added to drives by the pipeline runner (task 10). init_db adds any that an older
 # database lacks (ALTER TABLE ... ADD COLUMN), so existing databases keep working.
 #   stage         current pipeline stage: queued, preprocessing, detecting, aggregating,
-#                 verifying, done or failed; NULL until a run is requested
+#                 verifying, deduplicating, done or failed; NULL until a run is requested
 #   error         "<stage>: <message>" of the last failed run; NULL on success and while running
 #   failed_stage  the stage that raised, set only when stage is 'failed'
 #   updated_at    UTC ISO time of the last status or stage change
@@ -93,7 +93,8 @@ DETECTIONS_INDEX = (
 # Tracks are grouped per (hazard_class, track_key), so a physical object that the provider loses
 # at a chunk boundary becomes two candidates (stitching is left to deduplication, task 14).
 # hazard_id stays NULL until deduplication (task 14) links the candidate to a hazard (no foreign
-# key yet: the hazards table does not exist). Timestamps are seconds from the source video start;
+# key: the link is recomputed by deduplication and may briefly point at a deleted hazard, which is
+# then treated as NULL). Timestamps are seconds from the source video start;
 # best_frame_index is the global frame index. best_frame_path and crop_path are absolute JPEG
 # paths inside the git-ignored data dir. lat/lon/heading are NULL unless geotag_status is 'ok';
 # 'out_of_range' means the best frame's time falls outside the GPX track, 'no_gps' that the drive
@@ -155,6 +156,47 @@ CREATE TABLE IF NOT EXISTS verdicts (
 VERDICTS_INDEX = "CREATE INDEX IF NOT EXISTS idx_verdicts_drive ON verdicts (drive_id)"
 
 
+# One row per real-world hazard (task 14, written by backend/dedup.py; status is also set by the
+# review UI). Candidates link to it through candidates.hazard_id (no foreign key: the link is
+# recomputed by deduplication and must never block deleting candidates). All of the columns below
+# except id, status and created_at are derived from the member candidates and rewritten by every
+# deduplication run; id and status survive. The rules are in backend/dedup.py.
+#   direction     degrees, 0 = north, clockwise, [0, 360): circular mean of the members' headings
+#   severity      1 to 3, the largest severity among the members
+#   confidence    0 to 1, noisy-OR of the best confidence per drive
+#   sightings     number of distinct drives that saw it; candidate_count is the number of members
+#   first_seen    UTC ISO time of the earliest member (drive start + best-frame time)
+#   last_seen     UTC ISO time of the latest member
+#   photo_path    best-frame JPEG of the best-scoring member (crop_path: its crop, may be NULL)
+#   status        new, approved, rejected, reported or possibly_fixed (enforced by a CHECK)
+HAZARD_STATUSES = ("new", "approved", "rejected", "reported", "possibly_fixed")
+HAZARDS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS hazards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hazard_class TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    direction REAL,
+    severity INTEGER NOT NULL,
+    confidence REAL NOT NULL,
+    sightings INTEGER NOT NULL,
+    candidate_count INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    photo_path TEXT,
+    crop_path TEXT,
+    status TEXT NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'approved', 'rejected', 'reported', 'possibly_fixed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+HAZARDS_INDEX = "CREATE INDEX IF NOT EXISTS idx_hazards_class ON hazards (hazard_class, lat, lon)"
+CANDIDATES_HAZARD_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_candidates_hazard ON candidates (hazard_id)"
+)
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     conn = sqlite3.connect(str(path if path is not None else db_path()))
@@ -198,6 +240,9 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(CANDIDATES_INDEX)
         conn.execute(VERDICTS_SCHEMA)
         conn.execute(VERDICTS_INDEX)
+        conn.execute(HAZARDS_SCHEMA)
+        conn.execute(HAZARDS_INDEX)
+        conn.execute(CANDIDATES_HAZARD_INDEX)
         conn.commit()
     finally:
         conn.close()

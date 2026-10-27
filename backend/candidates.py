@@ -93,6 +93,7 @@ import numpy as np
 
 from . import config
 from .db import get_connection, init_db
+from .dedup import refresh_hazards_quietly
 from .detection import _normalise_chunks, load_detections
 from .gpx_track import GpxError, GpxRangeError, GpxTrack
 from .providers.types import rle_area
@@ -477,6 +478,8 @@ def _store(drive_id: str, rows: list[dict[str, Any]], target: Path, new_files: s
     stale = [p for r in old for p in r if p]
     keep = {str(p) for p in new_files}
     _remove_files(Path(p) for p in stale if p not in keep)
+    if old:
+        refresh_hazards_quietly(target)
 
 
 def load_candidates(drive_id: str, *, db_path: str | Path | None = None) -> list[dict[str, Any]]:

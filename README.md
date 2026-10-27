@@ -186,7 +186,7 @@ hazards = load_accepted_candidates("drive-1")             # accepted candidates,
 
 ## Pipeline runner
 
-`backend/pipeline.py` runs preprocessing, detection, aggregation and verification for one drive as a single job and records progress and errors on the drive:
+`backend/pipeline.py` runs preprocessing, detection, aggregation, verification and deduplication for one drive as a single job and records progress and errors on the drive:
 
 ```python
 from backend.pipeline import run_pipeline
@@ -195,11 +195,31 @@ result = run_pipeline(drive_id)      # synchronous; returns a PipelineResult, st
 
 API: `POST /api/drives/{id}/process` (no body) starts the job in the background and returns `202` with the drive record straight away (`status: processing`, `stage: queued`). It returns `404` for an unknown drive and `409` if the drive is already processing (the claim is one atomic `UPDATE`, so concurrent requests cannot start two runs). A `done` or `failed` drive can be processed again; its results are replaced. Poll `GET /api/drives/{id}` for progress.
 
-- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, then `done` or `failed`. Both are committed before each stage starts.
+- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, `deduplicating`, then `done` or `failed`. Both are committed before each stage starts.
 - **Errors**: on any exception the drive gets `status: failed`, `stage: failed`, `failed_stage` (the stage that raised) and `error` = `"<stage>: <message>"`, on one line, cut to 500 characters, with the Meta key and bearer tokens replaced by `***`. No stack trace goes into the API. `error` is NULL on success and cleared when a run starts. Other columns added to `drives`: `updated_at`, `finished_at` (existing databases are migrated by `init_db`).
 - **What is kept after a failure**: each run first clears the drive's old detections, candidates (with verdicts and images) and work folder, so a failure at stage S leaves only the results of the stages before S from this run, and nothing stale. Each stage is all-or-nothing. A GPX that is out of range or unusable is not a failure: candidates get `geotag_status` `out_of_range` or `no_gps` and the drive ends `done`.
 - **Files** live under `data/storage/<drive id>/`: the upload (never modified or deleted), `work/` (chunks and `frame_timestamps.json`, kept after the run) and `candidates/` (best-frame and crop JPEGs).
 - The provider is `get_provider()` at run time (fake unless `ROADSCOUT_PROVIDER` says otherwise), one instance for detection and verification. fps, chunk length and height come from the `ROADSCOUT_PREPROCESS_*` / `ROADSCOUT_CHUNK_SECONDS` settings. If the server stops mid-run, the drive is marked `failed` ("interrupted") at the next start. Run a single server process.
+
+## Hazard deduplication
+
+`backend/dedup.py` merges the accepted, geotagged candidates of all drives into one row per real-world hazard (table `hazards`). It runs as the pipeline stage `deduplicating` after `verifying`, or on its own:
+
+```python
+from backend.dedup import deduplicate_drive, load_hazards, set_hazard_status
+summary = deduplicate_drive("drive-1")      # DedupSummary: candidate_count, hazard_count, created/updated/removed_count, hazards
+hazards = load_hazards()                    # dicts ordered by id (status= / hazard_class= filters)
+set_hazard_status(1, "approved")            # new, approved, rejected, reported, possibly_fixed
+```
+
+`deduplicate_drive(drive_id, *, db_path=None, distance_m=None, heading_tolerance_deg=None)`; `rebuild_hazards(...)` is the same without a drive.
+
+- **Takes part**: candidates with an accepted `is_hazard` verdict and `geotag_status = 'ok'` (lat and lon present). Their class is the verdict's class. Others keep `hazard_id` NULL.
+- **Same hazard**: same class, haversine distance <= `distance_m` (default 25, env `ROADSCOUT_DEDUP_DISTANCE_M`) and circular heading difference <= `heading_tolerance_deg` (default 45, env `ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG`; 350 and 10 differ by 20). A candidate without a heading never merges. Parameters beat env vars; both are read at call time. Hazards are the connected components of this relation (single linkage over all drives), so the result does not depend on row order and chaining is allowed: a row of candidates 20 m apart is one hazard.
+- **Values**: `sightings` = distinct drives; `candidate_count` = member candidates; `severity` = max; `confidence` = noisy-OR over drives of each drive's best confidence, `1 - prod(1 - c)`, never below the best single one and at most 1; `direction` = circular mean of headings; `lat`/`lon` = confidence-weighted centroid; `photo_path`/`crop_path` = the highest-scoring member's; `first_seen`/`last_seen` = drive `started_at` + `best_timestamp` (UTC ISO).
+- **Table `hazards`**: `id`, `hazard_class`, `lat`, `lon`, `direction`, `severity`, `confidence`, `sightings`, `candidate_count`, `first_seen`, `last_seen`, `photo_path`, `crop_path`, `status` (default `new`, CHECK-constrained), `created_at`, `updated_at`. `candidates.hazard_id` links each member.
+- **Re-runs**: idempotent, one transaction. Surviving hazards keep their id, status and `created_at`; new sightings join an existing hazard; hazards with no member candidates left are deleted; other drives' hazards are recomputed to the same values. `clear_results` and `aggregate_drive` reconcile the table when they delete candidates, so a failed re-run leaves no hazard without candidates. If a drive is reprocessed and its only hazards had no other drive's sightings, they come back with new ids.
+- **Pipeline**: a failure raises `deduplicating: ...` on the drive (`failed_stage = 'deduplicating'`); the stage is rolled back as a whole.
 
 ## Results page (local only)
 

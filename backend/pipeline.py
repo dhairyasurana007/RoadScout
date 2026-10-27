@@ -14,11 +14,14 @@ Stages, in order (each one is the function of an earlier task):
                                                 started_at and clock_offset_seconds
     verifying      verify_drive       (task 9)  candidates -> verdicts (chunks= passed, so the frames
                                                 next to the best frame are attached)
+    deduplicating  deduplicate_drive  (task 14) accepted geotagged candidates -> hazards table, merged
+                                                with the hazards of this and earlier drives
 
 Drive status and stage (columns of the ``drives`` table, also keys of the drive JSON):
 
     status  uploaded -> processing -> done | failed        (a finished or failed drive can run again)
-    stage   NULL (never run), queued, preprocessing, detecting, aggregating, verifying, done, failed
+    stage   NULL (never run), queued, preprocessing, detecting, aggregating, verifying,
+            deduplicating, done, failed
     error   NULL unless status is failed; then "<stage>: <message>" (see below)
     failed_stage  the stage that raised (preprocessing, ...), only when status is failed
     updated_at    UTC ISO time of the last status or stage change
@@ -63,6 +66,9 @@ Failure behaviour:
   Examples: verifying fails -> detections and candidates stay, no verdicts; detecting fails -> only
   the preprocessed chunks stay. Each stage is itself all-or-nothing (see its module).
 - Re-running a done or failed drive clears and replaces its results. The upload is never touched.
+  The ``hazards`` table is shared by all drives: clearing a drive's candidates also recomputes the
+  hazards they belonged to (see ``backend/dedup.py``), and a failure at ``deduplicating`` leaves the
+  detections, candidates and verdicts of this run in place with the hazards table rolled back.
 - A server restart while a drive is processing leaves it stuck at ``processing``; ``recover_interrupted``
   (called when the app starts) marks such drives failed with "interrupted: ...". Run one server
   process only.
@@ -82,6 +88,8 @@ from typing import Any
 from . import config
 from .candidates import AggregationSummary, aggregate_drive
 from .db import get_connection, init_db
+from . import dedup as _dedup
+from .dedup import DedupSummary, refresh_hazards_quietly
 from .detection import DetectionSummary, run_detection
 from .preprocess import PreprocessResult, preprocess_video
 from .providers import ModelProvider, get_provider
@@ -99,10 +107,11 @@ STAGE_PREPROCESSING = "preprocessing"
 STAGE_DETECTING = "detecting"
 STAGE_AGGREGATING = "aggregating"
 STAGE_VERIFYING = "verifying"
+STAGE_DEDUPLICATING = "deduplicating"
 STAGE_DONE = "done"
 STAGE_FAILED = "failed"
 
-STAGES = (STAGE_PREPROCESSING, STAGE_DETECTING, STAGE_AGGREGATING, STAGE_VERIFYING)
+STAGES = (STAGE_PREPROCESSING, STAGE_DETECTING, STAGE_AGGREGATING, STAGE_VERIFYING, STAGE_DEDUPLICATING)
 
 MAX_ERROR_CHARS = 500
 WORK_DIR_NAME = "work"
@@ -130,6 +139,7 @@ class PipelineResult:
     detection: DetectionSummary | None = None
     aggregation: AggregationSummary | None = None
     verification: VerificationSummary | None = None
+    dedup: DedupSummary | None = None
 
     @property
     def ok(self) -> bool:
@@ -137,6 +147,12 @@ class PipelineResult:
 
 
 # ----- helpers -----------------------------------------------------------------------------
+
+
+def deduplicate_drive(*args: Any, **kwargs: Any) -> DedupSummary:
+    """The deduplicating stage. Looks ``backend.dedup.deduplicate_drive`` up at call time, so patching
+    either that name or ``backend.pipeline.deduplicate_drive`` replaces the stage."""
+    return _dedup.deduplicate_drive(*args, **kwargs)
 
 
 def _now() -> str:
@@ -229,7 +245,8 @@ def recover_interrupted(*, db_path: str | Path | None = None) -> int:
     try:
         with conn:
             cur = conn.execute(
-                "UPDATE drives SET status = ?, failed_stage = CASE WHEN stage IN (?, ?, ?, ?) THEN stage END,"
+                "UPDATE drives SET status = ?, failed_stage = CASE WHEN stage IN ("
+                + ", ".join("?" for _ in STAGES) + ") THEN stage END,"
                 " stage = ?, error = ?, finished_at = ?, updated_at = ? WHERE status = ?",
                 (STATUS_FAILED, *STAGES, STAGE_FAILED,
                  "interrupted: the server stopped while this drive was processing; run it again",
@@ -255,6 +272,8 @@ def clear_results(drive_id: str, *, db_path: str | Path | None = None, work_dir:
             conn.execute("DELETE FROM detections WHERE drive_id = ?", (drive_id,))
     finally:
         conn.close()
+    if old:
+        refresh_hazards_quietly(db)  # hazards must not outlive the candidates they were built from
     for row in old:
         for path in row:
             if path:
@@ -284,8 +303,10 @@ def run_pipeline(
     claimed: bool = False,
     skip_stationary: bool | None = None,
     stationary_speed_mps: float | None = None,
+    distance_m: float | None = None,
+    heading_tolerance_deg: float | None = None,
 ) -> PipelineResult:
-    """Run the four stages for one drive and record progress, errors and the outcome in the
+    """Run the five stages for one drive and record progress, errors and the outcome in the
     ``drives`` row. See the module docstring.
 
     ``provider``, ``db_path`` and ``storage`` default to the configured ones. ``work_dir`` defaults to
@@ -295,6 +316,8 @@ def run_pipeline(
     ``claim_drive`` (the API route does); otherwise this function claims the drive itself.
     ``skip_stationary`` / ``stationary_speed_mps`` switch and tune the stationary-frame filter of the
     detecting stage (task 13; None means ROADSCOUT_SKIP_STATIONARY / ROADSCOUT_STATIONARY_SPEED_MPS).
+    ``distance_m`` / ``heading_tolerance_deg`` tune the deduplicating stage (task 14; None means
+    ROADSCOUT_DEDUP_DISTANCE_M / ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG).
     """
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
@@ -367,6 +390,12 @@ def run_pipeline(
             min_confidence=min_confidence,
             db_path=db,
         )
+
+        stage = STAGE_DEDUPLICATING
+        _update(db, drive_id, stage=stage)
+        result.dedup = deduplicate_drive(
+            drive_id, db_path=db, distance_m=distance_m, heading_tolerance_deg=heading_tolerance_deg
+        )
     except Exception as exc:
         message = clean_error_message(exc, stage)
         logger.warning("pipeline failed for drive %s at %s: %s", drive_id, stage, message,
@@ -384,8 +413,9 @@ def run_pipeline(
     _update(db, drive_id, status=STATUS_DONE, stage=STAGE_DONE, error=None, failed_stage=None,
             finished_at=now)
     result.status, result.stage = STATUS_DONE, STAGE_DONE
-    logger.info("pipeline done for drive %s: %d candidates, %d accepted", drive_id,
-                result.verification.candidate_count, result.verification.accepted_count)
+    logger.info("pipeline done for drive %s: %d candidates, %d accepted, %d hazards", drive_id,
+                result.verification.candidate_count, result.verification.accepted_count,
+                result.dedup.hazard_count)
     return result
 
 
