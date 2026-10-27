@@ -104,3 +104,59 @@
   width: 160px;
   margin-top: 0.4rem;
 }
+
+/* Status badge, the "edited" marker and the review controls (task 17). */
+.rs-badge {
+  display: inline-block;
+  padding: 0 0.5em;
+  border-radius: 999px;
+  border: 1px solid #333;
+  background: #e3f2fd;
+  color: #0d3c61;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rs-badge[data-status="approved"] { background: #e8f5e9; color: #1b5e20; }
+.rs-badge[data-status="rejected"] { background: #eeeeee; color: #424242; }
+.rs-badge[data-status="reported"] { background: #f3e5f5; color: #4a148c; }
+.rs-badge[data-status="possibly_fixed"] { background: #fff3e0; color: #8a4500; }
+
+.rs-edited {
+  margin-left: 0.4em;
+  padding: 0 0.4em;
+  border: 1px dashed #8a4500;
+  border-radius: 4px;
+  color: #8a4500;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.rs-review {
+  padding: 0 0.5rem 0.5rem;
+}
+.rs-popup .rs-review {
+  padding: 0.4rem 0 0;
+}
+.rs-popup {
+  width: 230px;
+}
+.rs-review-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.rs-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+.rs-hint {
+  color: #555;
+  font-size: 12px;
+}
+.rs-review-error {
+  margin: 0.35rem 0 0;
+  color: #b00020;
+  font-size: 13px;
+}

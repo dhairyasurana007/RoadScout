@@ -214,6 +214,22 @@ CREATE TABLE IF NOT EXISTS hazards (
     updated_at TEXT NOT NULL
 )
 """
+# Columns added to hazards by the review actions (task 17, written by backend/dedup.py review_hazard),
+# same idempotent migration (existing rows get the defaults):
+#   reviewed_at            UTC ISO time status was last set to approved or rejected; NULL while the status
+#                          is anything else (set back to new clears it)
+#   class_edited           1 while the user's class differs from the automatic one, else 0
+#   severity_edited        1 while the user's severity differs from the automatic one, else 0
+#   original_hazard_class  the automatic class while class_edited = 1, else NULL (for the eval)
+#   original_severity      the automatic severity while severity_edited = 1, else NULL
+# Deduplication never overwrites an edited class or severity (it keeps the original_* values current).
+HAZARDS_REVIEW_COLUMNS = {
+    "reviewed_at": "TEXT",
+    "class_edited": "INTEGER NOT NULL DEFAULT 0",
+    "severity_edited": "INTEGER NOT NULL DEFAULT 0",
+    "original_hazard_class": "TEXT",
+    "original_severity": "INTEGER",
+}
 HAZARDS_INDEX = "CREATE INDEX IF NOT EXISTS idx_hazards_class ON hazards (hazard_class, lat, lon)"
 CANDIDATES_HAZARD_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_candidates_hazard ON candidates (hazard_id)"
@@ -222,7 +238,8 @@ CANDIDATES_HAZARD_INDEX = (
 
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
-    conn = sqlite3.connect(str(path if path is not None else db_path()))
+    # A generous busy timeout: concurrent writers (review clicks, a pipeline run) wait for the lock.
+    conn = sqlite3.connect(str(path if path is not None else db_path()), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -266,6 +283,7 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(VERDICTS_SCHEMA)
         conn.execute(VERDICTS_INDEX)
         conn.execute(HAZARDS_SCHEMA)
+        _add_missing_columns(conn, "hazards", HAZARDS_REVIEW_COLUMNS)
         conn.execute(HAZARDS_INDEX)
         conn.execute(CANDIDATES_HAZARD_INDEX)
         conn.commit()
