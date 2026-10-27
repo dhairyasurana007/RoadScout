@@ -132,6 +132,27 @@ rows = load_detections("drive-1")                # dicts; box is a list, mask a 
 - **Empty results** are success and add no rows.
 - **Idempotent and all-or-nothing**: a run gathers every chunk's detections first, then replaces the drive's old rows in a single transaction. If the provider fails on any chunk (after its own retries), `DetectionError` (a `ProviderError`; `chunk_index`, `chunk_path`, original error as `__cause__`) is raised, nothing is written and the drive's earlier detections stay as they were.
 
+## Track aggregation and geotagging
+
+`backend/candidates.py` collapses the stored detections into one candidate per tracked object, picks each one's best frame, saves the images and geotags it:
+
+```python
+from backend.candidates import aggregate_drive, load_candidates
+from backend.gpx_track import GpxTrack
+
+track = GpxTrack.from_drive(drive_record)          # or None: the drive is looked up in the drives table
+summary = aggregate_drive("drive-1", result, gpx_track=track, min_frames=3)
+rows = load_candidates("drive-1")
+```
+
+- **Arguments**: `chunks` is anything `run_detection` accepts (a `PreprocessResult`, `frame_timestamps.json` or its folder, a list of `Chunk`). `gpx_track` is a `GpxTrack`, a drive record, or None. A plain `GpxTrack` needs `video_start=`; `clock_offset_seconds=` overrides the offset. `min_frames` defaults to `ROADSCOUT_MIN_TRACK_FRAMES` (3). `output_dir` defaults to `data/storage/<drive id>/candidates/`.
+- **One candidate per `(hazard_class, track_key)`**. Tracks are not stitched across chunks (a `track_key` is `"<chunk>:<track_id>"`); deduplication (task 14) merges the pieces. Tracks seen in fewer than `min_frames` distinct frames are dropped; exactly `min_frames` is kept.
+- **Per candidate**: first and last timestamp, frames seen, and the largest mask area (box area for a detection with no mask).
+- **Best frame**: `score = 0.4 * size + 0.3 * low + 0.3 * sharp`, where `size` is the detection's mask area over the track's largest, `low` is the box's bottom edge over the frame height (lower is closer to the car), and `sharp` is `v / (v + 100)` with `v` the Laplacian variance of the box region of the real frame. The weights are constants at the top of the module. Ties go to the earlier frame. The full frame and a crop of the box are saved as JPEGs (`c<chunk>_t<track id>_<class>_best.jpg` and `..._crop.jpg`).
+- **Geotag**: the GPX position at the best frame's timestamp gives `lat`, `lon` and `heading`, with `geotag_status = 'ok'`. If that time is outside the GPX track the candidate is kept with NULL location, `geotag_status = 'out_of_range'` and the reason in `geotag_note` (nothing is clamped). A drive with no usable GPX gets `'no_gps'`.
+- **Table `candidates`**: `id`, `drive_id`, `hazard_id` (NULL until dedup), `hazard_class`, `track_key`, `track_id`, `chunk`, `first_timestamp`, `last_timestamp`, `frames_seen`, `max_mask_area`, `best_frame_index`, `best_timestamp`, `best_box`, `best_frame_path`, `crop_path`, `lat`, `lon`, `heading`, `score`, `geotag_status`, `geotag_note`.
+- **Idempotent and all-or-nothing**: re-running replaces the drive's candidates in one transaction (and removes their old images). A missing chunk video raises `CandidateError` and leaves the old candidates alone. No detections means zero candidates, not an error. It uses OpenCV (`opencv-python-headless`) to decode frames and measure sharpness; there are no network calls.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -158,7 +179,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)

@@ -4,3 +4,7 @@ python-dotenv>=1.0
 python-multipart>=0.0.9
 httpx>=0.27
 pytest>=8
+opencv-python-headless>=4.8
+# used by the unit tests to build synthetic frames
+pillow>=10
+scipy>=1.11

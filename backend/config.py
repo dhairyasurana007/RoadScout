@@ -69,6 +69,27 @@ def hazard_prompts_path() -> Path:
     return Path(raw) if raw else ROOT / "config" / "hazard_prompts.json"
 
 
+# --- Track aggregation settings (task 8) ------------------------------------
+
+DEFAULT_MIN_TRACK_FRAMES = 3
+
+
+def min_track_frames() -> int:
+    """Fewest frames a tracked object must be seen in to become a candidate (a track with exactly
+    this many is kept). Set ROADSCOUT_MIN_TRACK_FRAMES to a whole number of 1 or more (default 3;
+    the task 26 spike sets the real value)."""
+    raw = os.environ.get("ROADSCOUT_MIN_TRACK_FRAMES")
+    if raw is None or not raw.strip():
+        return DEFAULT_MIN_TRACK_FRAMES
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"ROADSCOUT_MIN_TRACK_FRAMES must be a whole number, got {raw!r}") from None
+    if value != value or value in (float("inf"), float("-inf")) or value != int(value) or value < 1:
+        raise ValueError(f"ROADSCOUT_MIN_TRACK_FRAMES must be a whole number of 1 or more, got {raw!r}")
+    return int(value)
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0

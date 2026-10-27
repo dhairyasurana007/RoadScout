@@ -51,6 +51,46 @@ DETECTIONS_INDEX = (
 )
 
 
+# One row per tracked object worth looking at (task 8, written by backend/candidates.py).
+# Tracks are grouped per (hazard_class, track_key), so a physical object that the provider loses
+# at a chunk boundary becomes two candidates (stitching is left to deduplication, task 14).
+# hazard_id stays NULL until deduplication (task 14) links the candidate to a hazard (no foreign
+# key yet: the hazards table does not exist). Timestamps are seconds from the source video start;
+# best_frame_index is the global frame index. best_frame_path and crop_path are absolute JPEG
+# paths inside the git-ignored data dir. lat/lon/heading are NULL unless geotag_status is 'ok';
+# 'out_of_range' means the best frame's time falls outside the GPX track, 'no_gps' that the drive
+# has no usable GPX. geotag_note says why. max_mask_area is in pixels (box area when no mask).
+CANDIDATES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    drive_id TEXT NOT NULL,
+    hazard_id INTEGER,
+    hazard_class TEXT NOT NULL,
+    track_key TEXT NOT NULL,
+    track_id INTEGER NOT NULL,
+    chunk INTEGER NOT NULL,
+    first_timestamp REAL NOT NULL,
+    last_timestamp REAL NOT NULL,
+    frames_seen INTEGER NOT NULL,
+    max_mask_area REAL NOT NULL,
+    best_frame_index INTEGER NOT NULL,
+    best_timestamp REAL NOT NULL,
+    best_box TEXT NOT NULL,
+    best_frame_path TEXT NOT NULL,
+    crop_path TEXT,
+    lat REAL,
+    lon REAL,
+    heading REAL,
+    score REAL NOT NULL,
+    geotag_status TEXT NOT NULL,
+    geotag_note TEXT
+)
+"""
+CANDIDATES_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_candidates_drive ON candidates (drive_id, first_timestamp)"
+)
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     conn = sqlite3.connect(str(path if path is not None else db_path()))
@@ -74,6 +114,8 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(DRIVES_SCHEMA)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
+        conn.execute(CANDIDATES_SCHEMA)
+        conn.execute(CANDIDATES_INDEX)
         conn.commit()
     finally:
         conn.close()
