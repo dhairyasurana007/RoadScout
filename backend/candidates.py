@@ -65,12 +65,13 @@ deduplication), ``hazard_class``, ``track_key``, ``track_id``, ``chunk``, ``firs
 ``last_timestamp``, ``frames_seen``, ``max_mask_area``, ``best_frame_index`` (global),
 ``best_timestamp``, ``best_box`` (JSON ``[x1, y1, x2, y2]`` in decoded-frame pixels),
 ``best_frame_path``, ``crop_path``, ``lat``, ``lon``, ``heading``, ``score``, ``geotag_status``,
-``geotag_note``. Rows are ordered by ``first_timestamp``, then chunk, then track id, then class.
+``geotag_note``, plus the privacy-blur columns ``blurred_frame_path``, ``blurred_crop_path``,
+``blur_status``, ``blur_note`` (NULL here; written by ``backend/privacy.py``, task 15). Rows are ordered by ``first_timestamp``, then chunk, then track id, then class.
 
 Rules:
 
 - Idempotent per drive: the drive's old candidates are replaced in ONE transaction (other drives
-  are untouched); images of the old candidates that the new run does not reuse are deleted.
+  are untouched); images (also the blurred copies) of the old candidates that the new run does not reuse are deleted.
 - All-or-nothing: if a chunk file is missing or a frame cannot be decoded, ``CandidateError`` is
   raised before the database is touched and the drive's earlier candidates stay as they were.
 - No detections (or every track too short) means zero candidates and no error; old candidates of
@@ -464,7 +465,8 @@ def _store(drive_id: str, rows: list[dict[str, Any]], target: Path, new_files: s
     conn = get_connection(target)
     try:
         old = conn.execute(
-            "SELECT best_frame_path, crop_path FROM candidates WHERE drive_id = ?", (drive_id,)
+            "SELECT best_frame_path, crop_path, blurred_frame_path, blurred_crop_path "
+            "FROM candidates WHERE drive_id = ?", (drive_id,)
         ).fetchall()
         try:
             with conn:

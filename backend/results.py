@@ -3,8 +3,11 @@
     GET /api/drives/{id}/hazards                          the drive's accepted (verified) hazards
     GET /api/drives/{id}/hazards/{cid}/photo              best-frame JPEG (add ?variant=crop for the crop)
 
-The photos are NOT blurred until task 15, so these routes are for the local machine only: nothing
-here makes them public, and the hosted demo (task 23) must not mount this router.
+Only privacy-BLURRED images are served (task 15): the photo route reads ``blurred_frame_path`` /
+``blurred_crop_path`` of a candidate whose ``blur_status`` is ``ok`` and nothing else. A candidate without
+a blurred image (not blurred yet, blur failed) gets 404 from the URLs the list gives (``blur_status`` in each
+item says why); the unblurred best frame is never a fallback, and no file path is ever returned. The unblurred frames stay
+on the local disk and are removed by the Delete video button.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -57,6 +60,7 @@ def _hazard_json(drive_id: str, cand: dict[str, Any]) -> dict[str, Any]:
         "first_timestamp": cand["first_timestamp"],
         "last_timestamp": cand["last_timestamp"],
         "frames_seen": cand["frames_seen"],
+        "blur_status": cand.get("blur_status"),
         "photo_url": _photo_url(drive_id, cand["id"]),
         "crop_url": _photo_url(drive_id, cand["id"], "crop") if cand.get("crop_path") else None,
     }
@@ -79,21 +83,25 @@ def get_candidate_photo(
     variant: Literal["best", "crop"] = Query("best"),
     storage: Storage = Depends(get_storage),
 ) -> FileResponse:
-    """The best-frame JPEG of an accepted hazard (``variant=crop`` for the crop). 404 for an unknown
-    drive, an unknown candidate, a candidate of another drive, a candidate whose verdict is rejected
-    or missing, a candidate without that image, or a file that is missing or lies outside the
-    drive's candidates folder. A non-integer id is a 422."""
+    """The BLURRED best-frame JPEG of an accepted hazard (``variant=crop`` for the blurred crop). 404 for
+    an unknown drive, an unknown candidate, a candidate of another drive, a candidate whose verdict is
+    rejected or missing, a candidate without a blurred image (``blur_status`` not ``ok``; the unblurred
+    file is never served instead), a candidate without that image, or a file that is missing, lies outside
+    the drive's candidates folder or is the unblurred original. A non-integer id is a 422."""
     _require_drive(drive_id)
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT c.best_frame_path, c.crop_path FROM candidates c JOIN verdicts v ON v.candidate_id = c.id"
+            "SELECT c.best_frame_path, c.crop_path, c.blurred_frame_path, c.blurred_crop_path, c.blur_status"
+            " FROM candidates c JOIN verdicts v ON v.candidate_id = c.id"
             " WHERE c.id = ? AND c.drive_id = ? AND v.accepted = 1 AND v.is_hazard = 1",
             (candidate_id, drive_id),
         ).fetchone()
     finally:
         conn.close()
-    stored = None if row is None else row["crop_path" if variant == "crop" else "best_frame_path"]
+    if row is None or row["blur_status"] != "ok":
+        raise HTTPException(404, "Photo not found")
+    stored = row["blurred_crop_path" if variant == "crop" else "blurred_frame_path"]
     if not stored:
         raise HTTPException(404, "Photo not found")
     try:
@@ -101,7 +109,14 @@ def get_candidate_photo(
         path = Path(stored).resolve()
     except (ValueError, OSError):
         raise HTTPException(404, "Photo not found") from None
-    if not path.is_relative_to(folder) or not path.is_file():
+    originals = set()
+    for column in ("best_frame_path", "crop_path"):
+        try:
+            if row[column]:
+                originals.add(Path(row[column]).resolve())
+        except (ValueError, OSError):
+            pass
+    if not path.is_relative_to(folder) or not path.is_file() or path in originals:
         raise HTTPException(404, "Photo not found")
-    # no-store: the file is replaced when a drive is processed again, and it is unblurred.
+    # no-store: the file is replaced when a drive is processed again.
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

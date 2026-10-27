@@ -142,6 +142,9 @@ def make_hook_provider(*, on_detect=None, fail_detect_on=None):
             self.n = 0
 
         def detect(self, video_path, prompts):
+            # task 15: the privacy blur calls detect() on saved JPEGs; those are not chunk calls
+            if Path(str(video_path)).suffix.lower() in (".jpg", ".jpeg", ".png"):
+                return self.inner.detect(video_path, prompts)
             n = self.n
             self.n += 1
             if on_detect:

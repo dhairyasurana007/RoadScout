@@ -122,7 +122,10 @@ def test_stage_list_has_deduplicating_after_verifying():
     stages = list(getattr(p, "STAGES", ()))
     assert "verifying" in stages
     assert "deduplicating" in stages, "STAGES = %r" % (stages,)
-    assert stages.index("deduplicating") == stages.index("verifying") + 1
+    # task 15 inserted the privacy blur between verification and deduplication
+    assert "blurring" in stages, "STAGES = %r" % (stages,)
+    assert stages.index("blurring") == stages.index("verifying") + 1
+    assert stages.index("deduplicating") == stages.index("blurring") + 1
     assert stages[-1] == "deduplicating"
 
 

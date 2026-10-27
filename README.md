@@ -186,7 +186,7 @@ hazards = load_accepted_candidates("drive-1")             # accepted candidates,
 
 ## Pipeline runner
 
-`backend/pipeline.py` runs preprocessing, detection, aggregation, verification and deduplication for one drive as a single job and records progress and errors on the drive:
+`backend/pipeline.py` runs preprocessing, detection, aggregation, verification, privacy blurring and deduplication for one drive as a single job and records progress and errors on the drive:
 
 ```python
 from backend.pipeline import run_pipeline
@@ -195,10 +195,10 @@ result = run_pipeline(drive_id)      # synchronous; returns a PipelineResult, st
 
 API: `POST /api/drives/{id}/process` (no body) starts the job in the background and returns `202` with the drive record straight away (`status: processing`, `stage: queued`). It returns `404` for an unknown drive and `409` if the drive is already processing (the claim is one atomic `UPDATE`, so concurrent requests cannot start two runs). A `done` or `failed` drive can be processed again; its results are replaced. Poll `GET /api/drives/{id}` for progress.
 
-- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, `deduplicating`, then `done` or `failed`. Both are committed before each stage starts.
+- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, `blurring`, `deduplicating`, then `done` or `failed`. Both are committed before each stage starts.
 - **Errors**: on any exception the drive gets `status: failed`, `stage: failed`, `failed_stage` (the stage that raised) and `error` = `"<stage>: <message>"`, on one line, cut to 500 characters, with the Meta key and bearer tokens replaced by `***`. No stack trace goes into the API. `error` is NULL on success and cleared when a run starts. Other columns added to `drives`: `updated_at`, `finished_at` (existing databases are migrated by `init_db`).
 - **What is kept after a failure**: each run first clears the drive's old detections, candidates (with verdicts and images) and work folder, so a failure at stage S leaves only the results of the stages before S from this run, and nothing stale. Each stage is all-or-nothing. A GPX that is out of range or unusable is not a failure: candidates get `geotag_status` `out_of_range` or `no_gps` and the drive ends `done`.
-- **Files** live under `data/storage/<drive id>/`: the upload (never modified or deleted), `work/` (chunks and `frame_timestamps.json`, kept after the run) and `candidates/` (best-frame and crop JPEGs).
+- **Files** live under `data/storage/<drive id>/`: the upload (never modified or deleted), `work/` (chunks and `frame_timestamps.json`, kept after the run) and `candidates/` (best-frame and crop JPEGs, unblurred and local only, plus their blurred copies `*_blur.jpg`). Only the Delete video button removes the upload (see below).
 - The provider is `get_provider()` at run time (fake unless `ROADSCOUT_PROVIDER` says otherwise), one instance for detection and verification. fps, chunk length and height come from the `ROADSCOUT_PREPROCESS_*` / `ROADSCOUT_CHUNK_SECONDS` settings. If the server stops mid-run, the drive is marked `failed` ("interrupted") at the next start. Run a single server process.
 
 ## Hazard deduplication
@@ -214,23 +214,50 @@ set_hazard_status(1, "approved")            # new, approved, rejected, reported,
 
 `deduplicate_drive(drive_id, *, db_path=None, distance_m=None, heading_tolerance_deg=None)`; `rebuild_hazards(...)` is the same without a drive.
 
-- **Takes part**: candidates with an accepted `is_hazard` verdict and `geotag_status = 'ok'` (lat and lon present). Their class is the verdict's class. Others keep `hazard_id` NULL.
+- **Takes part**: candidates with an accepted `is_hazard` verdict and `geotag_status = 'ok'` (lat and lon present). The privacy blur must not have failed (`blur_status` is not `failed`). Their class is the verdict's class. Others keep `hazard_id` NULL.
 - **Same hazard**: same class, haversine distance <= `distance_m` (default 25, env `ROADSCOUT_DEDUP_DISTANCE_M`) and circular heading difference <= `heading_tolerance_deg` (default 45, env `ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG`; 350 and 10 differ by 20). A candidate without a heading never merges. Parameters beat env vars; both are read at call time. Hazards are the connected components of this relation (single linkage over all drives), so the result does not depend on row order and chaining is allowed: a row of candidates 20 m apart is one hazard.
-- **Values**: `sightings` = distinct drives; `candidate_count` = member candidates; `severity` = max; `confidence` = noisy-OR over drives of each drive's best confidence, `1 - prod(1 - c)`, never below the best single one and at most 1; `direction` = circular mean of headings; `lat`/`lon` = confidence-weighted centroid; `photo_path`/`crop_path` = the highest-scoring member's; `first_seen`/`last_seen` = drive `started_at` + `best_timestamp` (UTC ISO).
+- **Values**: `sightings` = distinct drives; `candidate_count` = member candidates; `severity` = max; `confidence` = noisy-OR over drives of each drive's best confidence, `1 - prod(1 - c)`, never below the best single one and at most 1; `direction` = circular mean of headings; `lat`/`lon` = confidence-weighted centroid; `photo_path`/`crop_path` = the highest-scoring member's BLURRED paths (`blurred_frame_path`/`blurred_crop_path`; NULL if it has none, never the unblurred ones); `first_seen`/`last_seen` = drive `started_at` + `best_timestamp` (UTC ISO).
 - **Table `hazards`**: `id`, `hazard_class`, `lat`, `lon`, `direction`, `severity`, `confidence`, `sightings`, `candidate_count`, `first_seen`, `last_seen`, `photo_path`, `crop_path`, `status` (default `new`, CHECK-constrained), `created_at`, `updated_at`. `candidates.hazard_id` links each member.
 - **Re-runs**: idempotent, one transaction. Surviving hazards keep their id, status and `created_at`; new sightings join an existing hazard; hazards with no member candidates left are deleted; other drives' hazards are recomputed to the same values. `clear_results` and `aggregate_drive` reconcile the table when they delete candidates, so a failed re-run leaves no hazard without candidates. If a drive is reprocessed and its only hazards had no other drive's sightings, they come back with new ids.
 - **Pipeline**: a failure raises `deduplicating: ...` on the drive (`failed_stage = 'deduplicating'`); the stage is rolled back as a whole.
+
+## Privacy blur
+
+`backend/privacy.py` blurs faces and license plates in the saved frames. It runs as the pipeline stage `blurring` (after `verifying`, before `deduplicating`), or on its own:
+
+```python
+from backend.privacy import blur_drive, blur_image, load_privacy_prompts
+summary = blur_drive("drive-1")                              # BlurSummary: ok_count, failed_count, mask_count, candidates
+blur_image("frame.jpg", "frame_blur.jpg", [rle_mask, ...])   # src, dst, masks
+```
+
+- **Prompts**: `config/privacy_prompts.json` (`{"version": 1, "prompts": ["face", "license plate"]}`; override the path with `ROADSCOUT_PRIVACY_PROMPTS`).
+- **What is sent**: only the saved best-frame and crop JPEGs of ACCEPTED candidates, never the video, with `provider.detect(<jpeg path>, ["face", "license plate"])`, one call per image (SAM 3.1 on a still image; there is no extra provider method, and the fake provider recognises an image path by its extension and returns a face and a plate mask, or nothing in the `no_masks` scenario). The masks of all returned detections are combined (a detection without a mask counts as its box). A valid result with no detections is success: the copy is unchanged.
+- **Blur**: each masked area is pixelated into about five cells across and smoothed with a Gaussian, inside the mask only. `blur_drive` grows each mask by `ROADSCOUT_BLUR_DILATE_PX` pixels (default 4); `blur_image` defaults to 0 (exactly the mask). Masks of another size than the image are scaled to it. An empty mask list gives an unchanged copy. The original is never modified.
+- **Files and columns**: `c0000_t1_pothole_best.jpg` becomes `c0000_t1_pothole_best_blur.jpg` (crop: `..._crop_blur.jpg`) in the same `candidates/` folder. The `candidates` table gets `blurred_frame_path`, `blurred_crop_path`, `blur_status` (`ok` or `failed`; NULL for rejected candidates) and `blur_note`, added by the idempotent migration in `init_db`.
+- **Fails closed**: if the provider raises, returns something that is not a detection result, or a mask is invalid, that candidate gets `blur_status = 'failed'`, no blurred file and nothing is served for it. `blur_drive` records all results in one transaction and then raises `BlurError`; the pipeline ends the drive `failed` with `failed_stage = 'blurring'` and `error = 'blurring: ...'`. Re-running replaces the drive's blurred files without leaving stale ones.
+- **Everything downstream uses the blurred images**: `hazards.photo_path` / `crop_path` are the blurred paths (never the unblurred ones; a candidate whose blur failed does not take part in deduplication), and the photo route serves only blurred images.
+- **Unblurred frames** are kept locally in `data/storage/<drive id>/candidates/` and leave the machine only for the Muse Spark verification call (the one accepted exception). Delete video removes them.
+
+## Delete video
+
+`DELETE /api/drives/{id}/video` (the **Delete video** button on the drive panel) removes the drive's raw video, the `work/` folder (chunks and `frame_timestamps.json`) and the unblurred candidate JPEGs. It keeps the GPX, all database rows (detections, candidates, verdicts, hazards) and the blurred images, so the results page keeps working. Raw video is never deleted any other way and never committed.
+
+- Returns `200` with the updated drive JSON. `video_deleted` (bool, in every drive JSON) and `video_deleted_at` say whether it happened; `video_path` keeps the stored key and `status` is not changed. New nullable `drives.video_deleted_at` column (idempotent migration).
+- `404` for an unknown drive, `409` while the drive is processing (the check and the mark are one atomic `UPDATE`). Deleting again returns the same `200` (and sweeps leftovers), and files that are already gone are not an error. If a file cannot be removed it answers `500` ("Could not delete everything. Call again to retry.", with no path; the details are in the server log) and a second call retries.
+- After deletion `POST /api/drives/{id}/process` returns `409` ("the raw video of this drive was deleted"), the provider is not called and nothing is changed; this holds for a drive that was never processed too.
+- UI: the button opens an inline confirmation ("Delete video?" / "Yes, delete" / "Cancel"); it is disabled while the drive is processing and shows "Video deleted" afterwards, with Start processing disabled.
 
 ## Results page (local only)
 
 The upload page doubles as the results page (`backend/results.py`, `frontend/src/App.jsx`). After an upload (or after typing a drive ID under "Open an existing drive") it shows the drive status and a **Start processing** button (`POST /api/drives/{id}/process`; disabled while the drive is processing). While the drive is `processing` the page polls `GET /api/drives/{id}` every 1.5 s (add `?pollMs=50` to the page URL to shorten it, minimum 10) and shows the stage; a `failed` drive shows the stage and error text. When the drive is `done` it lists the verified hazards, each with photo, class, severity (1 Low, 2 Medium, 3 High), confidence and location (5 decimals, or "no location"), or "No verified hazards".
 
-**The photos are unblurred (faces and license plates visible) until the privacy blur (task 15), so this page and these routes are for your own machine only.** The page says so, and the hosted demo (task 23) must not serve them.
+**Only privacy-blurred photos are shown** (see Privacy blur); a note on the page says so and that the raw video stays on your machine. A drive panel also has the Delete video button.
 
 API (read-only):
 
-- `GET /api/drives/{id}/hazards` returns `200` with a JSON list of the drive's accepted hazards (verdict `accepted` and `is_hazard`), in drive-time order, or `[]`. `404` for an unknown drive. Each item has `candidate_id` (also as `id`), `drive_id`, `hazard_class` (the verdict's class), `detector_class`, `severity` (1 to 3), `confidence` (0 to 1), `lane`, `reason`, `report_description`, `lat`, `lon`, `heading` (all `null` unless `geotag_status` is `ok`; the hazard is still listed), `geotag_status`, `best_timestamp`, `first_timestamp`, `last_timestamp`, `frames_seen`, `photo_url` and `crop_url` (`null` when there is no crop). No file paths are returned.
-- `GET /api/drives/{id}/hazards/{candidate_id}/photo` serves the best-frame JPEG (`image/jpeg`, `Cache-Control: no-store`); add `?variant=crop` for the crop. `404` for an unknown drive or candidate, a candidate of another drive, a rejected or non-hazard candidate, a missing file, or a stored path outside `data/storage/<drive id>/candidates/`. A non-integer candidate id is `422`.
+- `GET /api/drives/{id}/hazards` returns `200` with a JSON list of the drive's accepted hazards (verdict `accepted` and `is_hazard`), in drive-time order, or `[]`. `404` for an unknown drive. Each item has `candidate_id` (also as `id`), `drive_id`, `hazard_class` (the verdict's class), `detector_class`, `severity` (1 to 3), `confidence` (0 to 1), `lane`, `reason`, `report_description`, `lat`, `lon`, `heading` (all `null` unless `geotag_status` is `ok`; the hazard is still listed), `geotag_status`, `best_timestamp`, `first_timestamp`, `last_timestamp`, `frames_seen`, `blur_status`, `photo_url` and `crop_url` (`null` when there is no crop). No file paths are returned.
+- `GET /api/drives/{id}/hazards/{candidate_id}/photo` serves the BLURRED best-frame JPEG (`image/jpeg`, `Cache-Control: no-store`); add `?variant=crop` for the blurred crop. It never serves an unblurred file: `404` for an unknown drive or candidate, a candidate of another drive, a rejected or non-hazard candidate, a candidate whose `blur_status` is not `ok` (no blurred path), a missing file, or a stored path outside `data/storage/<drive id>/candidates/`. A non-integer candidate id is `422`.
 
 ## Tests
 
@@ -258,7 +285,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`), results routes (`results.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`), privacy blur (`privacy.py`, `config/privacy_prompts.json`), Delete video (`video_deletion.py`), results routes (`results.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)

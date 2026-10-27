@@ -37,7 +37,7 @@ function HazardCard({ hazard }) {
       data-candidate-id={hazard.candidate_id}
       style={{ display: "flex", gap: "1rem", marginBottom: "1rem", listStyle: "none" }}
     >
-      {photoFailed ? (
+      {photoFailed || !hazard.photo_url ? (
         <div data-testid="hazard-photo-missing" style={{ width: 240, color: "#666" }}>
           Photo unavailable
         </div>
@@ -107,6 +107,12 @@ export default function App() {
   const [hazards, setHazards] = useState({ state: "idle", items: [], message: "" });
   const [loadId, setLoadId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletingIds, setDeletingIds] = useState([]); // drives with a delete request in flight
+  const [deleteError, setDeleteError] = useState("");
+  // Same ids, updated synchronously: blocks a double click before React re-renders the disabled
+  // button. Keyed by drive, so a delete in flight for one drive never blocks another.
+  const deletes = useRef(new Set());
   const submitting = useRef(false); // blocks a double click before React re-renders the disabled button
   const starts = useRef(false);
   const loads = useRef(false);
@@ -123,6 +129,16 @@ export default function App() {
 
   const driveId = drive?.id;
   const status = drive?.status;
+
+  // The delete confirmation and its error belong to one drive; close them when another is shown, and
+  // when a run starts (the button is disabled while processing).
+  useEffect(() => {
+    setConfirmingDelete(false);
+    setDeleteError("");
+  }, [driveId]);
+  useEffect(() => {
+    if (status === "processing") setConfirmingDelete(false);
+  }, [status]);
 
   // Poll the drive while it is processing; stops when it is done or failed, and on unmount.
   useEffect(() => {
@@ -232,7 +248,7 @@ export default function App() {
   }
 
   async function onStart() {
-    if (starts.current || !drive || drive.status === "processing") return;
+    if (starts.current || !drive || drive.status === "processing" || drive.video_deleted) return;
     starts.current = true;
     setStarting(true);
     setError("");
@@ -247,6 +263,9 @@ export default function App() {
         // Pick up the real state so the page follows the run that is already going.
         const current = await fetch(`/api/drives/${encodeURIComponent(id)}`).catch(() => null);
         const data = current?.ok ? await current.json() : null;
+        if (data?.video_deleted && !stale()) {
+          setError("The raw video was deleted, so this drive cannot be processed again.");
+        }
         if (data && !stale()) showDrive(data);
         return;
       }
@@ -266,6 +285,42 @@ export default function App() {
     } finally {
       starts.current = false;
       setStarting(false);
+    }
+  }
+
+  async function onDeleteVideo() {
+    if (!drive || drive.status === "processing" || drive.video_deleted || starts.current) return;
+    const id = drive.id;
+    if (deletes.current.has(id)) return;
+    deletes.current.add(id);
+    setDeletingIds((ids) => [...ids, id]);
+    setDeleteError("");
+    const stale = () => shownId.current !== id; // another drive was opened meanwhile
+    try {
+      const response = await fetch(`/api/drives/${encodeURIComponent(id)}/video`, { method: "DELETE" });
+      if (stale()) return;
+      if (response.status === 404) {
+        setDeleteError("Drive not found.");
+      } else if (response.status === 409) {
+        setDeleteError(await errorDetail(response, "The drive is processing; try again when it finishes"));
+        // Pick up the real state (processing, or already deleted).
+        const current = await fetch(`/api/drives/${encodeURIComponent(id)}`).catch(() => null);
+        const data = current?.ok ? await current.json() : null;
+        if (data && !stale()) showDrive(data);
+      } else if (!response.ok) {
+        setDeleteError(await errorDetail(response, "Could not delete the video"));
+      } else {
+        const data = await response.json().catch(() => ({}));
+        if (stale()) return;
+        // The server answers with the updated drive; fall back to the flag if the body is empty.
+        showDrive({ ...drive, ...(data && data.id === id ? data : {}), video_deleted: true });
+      }
+    } catch {
+      if (!stale()) setDeleteError("Could not reach the server.");
+    } finally {
+      deletes.current.delete(id);
+      setDeletingIds((ids) => ids.filter((x) => x !== id));
+      if (!stale()) setConfirmingDelete(false);
     }
   }
 
@@ -300,6 +355,8 @@ export default function App() {
   }
 
   const processing = drive?.status === "processing";
+  const videoDeleted = Boolean(drive?.video_deleted);
+  const deleting = deletingIds.includes(drive?.id);
 
   return (
     <main style={{ fontFamily: "sans-serif", padding: "2rem", maxWidth: 800 }}>
@@ -307,11 +364,11 @@ export default function App() {
       <p>Hello, world. Road hazard scouting starts here.</p>
       <p
         role="note"
-        data-testid="local-only-note"
-        style={{ background: "#fff4e5", border: "1px solid #f0b36b", padding: "0.5rem 0.75rem" }}
+        data-testid="privacy-note"
+        style={{ background: "#eef6ee", border: "1px solid #8fbf8f", padding: "0.5rem 0.75rem" }}
       >
-        Local only: photos on this page are unblurred (faces and license plates are visible) until the
-        privacy blur ships. Do not share or host this page.
+        Photos shown here are privacy-blurred (faces and license plates). The raw video stays on this
+        machine until you delete it.
       </p>
 
       <h2>Upload a drive</h2>
@@ -397,11 +454,69 @@ export default function App() {
             </dd>
             <dt>Clock offset</dt>
             <dd data-testid="drive-offset">{drive.clock_offset_seconds} s</dd>
+            <dt>Raw video</dt>
+            <dd data-testid="drive-video-state">
+              {videoDeleted
+                ? `Deleted${drive.video_deleted_at ? ` at ${drive.video_deleted_at}` : ""}`
+                : "Kept on this machine"}
+            </dd>
           </dl>
 
-          <button type="button" data-testid="start-processing" onClick={onStart} disabled={starting || processing}>
-            {starting || processing ? "Processing..." : "Start processing"}
-          </button>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              type="button"
+              data-testid="start-processing"
+              onClick={onStart}
+              disabled={starting || processing || videoDeleted}
+            >
+              {starting || processing ? "Processing..." : "Start processing"}
+            </button>
+
+            {confirmingDelete && !videoDeleted ? (
+              <span data-testid="delete-video-confirm" role="group" aria-label="Confirm deleting the video">
+                <strong>Delete video?</strong>{" "}
+                <button
+                  type="button"
+                  data-testid="delete-video-yes"
+                  onClick={onDeleteVideo}
+                  disabled={deleting || processing || starting}
+                >
+                  {deleting ? "Deleting..." : "Yes, delete"}
+                </button>{" "}
+                <button
+                  type="button"
+                  data-testid="delete-video-cancel"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                data-testid="delete-video"
+                onClick={() => {
+                  setDeleteError("");
+                  setConfirmingDelete(true);
+                }}
+                disabled={processing || starting || videoDeleted}
+              >
+                {videoDeleted ? "Video deleted" : "Delete video"}
+              </button>
+            )}
+          </div>
+          {videoDeleted && (
+            <p data-testid="video-deleted-hint" style={{ color: "#555" }}>
+              The raw video and unblurred frames were deleted from this machine. The blurred results below
+              are kept, but this drive cannot be processed again.
+            </p>
+          )}
+          {deleteError && (
+            <p data-testid="delete-video-error" role="alert" style={{ color: "#b00020" }}>
+              {deleteError}
+            </p>
+          )}
 
           {pollError && (
             <p data-testid="poll-error" style={{ color: "#8a5a00" }}>

@@ -89,14 +89,17 @@ async function uploadDrive(page) {
 
 const startButton = (page) => page.getByTestId("start-processing");
 
-test("the unblurred, local-only note is always visible", async ({ page }) => {
+test("a privacy note says photos are blurred and the raw video stays local", async ({ page }) => {
   await page.goto(POLL);
   await expect(page.getByRole("heading", { name: "RoadScout" })).toBeVisible();
-  const note = page.getByTestId("local-only-note");
+  const note = page.getByTestId("privacy-note");
   await expect(note).toBeVisible();
-  await expect(note).toContainText("unblurred");
-  await expect(note).toContainText("Local only");
-  await expect(note).toContainText("privacy blur");
+  await expect(note).toContainText("privacy-blurred");
+  await expect(note).toContainText("faces and license plates");
+  await expect(note).toContainText("raw video stays on this machine");
+  // The old warning that photos were unblurred is gone.
+  await expect(page.getByTestId("local-only-note")).toHaveCount(0);
+  await expect(page.getByText("unblurred")).toHaveCount(0);
 });
 
 test("a new drive shows an enabled Start processing button and no results yet", async ({ page }) => {
@@ -361,6 +364,19 @@ test("a photo that fails to load shows a placeholder instead of a broken image",
   await uploadDrive(page);
   await startButton(page).click();
   await expect(page.getByTestId("hazard-photo-missing")).toHaveText("Photo unavailable");
+  await expect(page.getByTestId("hazard-class")).toHaveText("pothole");
+});
+
+test("a hazard without a photo URL shows the placeholder instead of an image", async ({ page }) => {
+  await mockDrive(page, {
+    process: drive({ status: "done", stage: "done" }),
+    hazards: [hazard({ photo_url: null })],
+  });
+  await page.goto(POLL);
+  await uploadDrive(page);
+  await startButton(page).click();
+  await expect(page.getByTestId("hazard-photo-missing")).toHaveText("Photo unavailable");
+  await expect(page.getByTestId("hazard-photo")).toHaveCount(0);
   await expect(page.getByTestId("hazard-class")).toHaveText("pothole");
 });
 

@@ -60,6 +60,14 @@ DRIVES_STATIONARY_COLUMNS = {
 }
 
 
+# Column added to drives by the Delete video button (task 15), same idempotent migration.
+#   video_deleted_at  UTC ISO time the raw video, work folder and unblurred frames were deleted on
+#                     request; NULL while they exist. video_path keeps the stored key either way.
+DRIVES_VIDEO_COLUMNS = {
+    "video_deleted_at": "TEXT",
+}
+
+
 # Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
 # frame_index is the global frame index and frame_timestamp the global time in seconds from the
 # source video start (both from frame_timestamps.json); frame_in_chunk is the position inside the
@@ -125,6 +133,20 @@ CREATE TABLE IF NOT EXISTS candidates (
     geotag_note TEXT
 )
 """
+
+# Columns added to candidates by the privacy blur (task 15, written by backend/privacy.py), same
+# idempotent migration. Only the blurred images are ever served or used for hazards:
+#   blurred_frame_path  JPEG of the best frame with faces and license plates blurred (NULL unless ok)
+#   blurred_crop_path   the same for the crop (NULL unless ok, or when the candidate has no crop)
+#   blur_status         NULL (not blurred yet / not a verified hazard), 'ok' or 'failed' (fail closed:
+#                       no blurred image exists and nothing is served for the candidate)
+#   blur_note           NULL, or one line why the blur failed
+CANDIDATES_BLUR_COLUMNS = {
+    "blurred_frame_path": "TEXT",
+    "blurred_crop_path": "TEXT",
+    "blur_status": "TEXT",
+    "blur_note": "TEXT",
+}
 CANDIDATES_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_candidates_drive ON candidates (drive_id, first_timestamp)"
 )
@@ -167,7 +189,8 @@ VERDICTS_INDEX = "CREATE INDEX IF NOT EXISTS idx_verdicts_drive ON verdicts (dri
 #   sightings     number of distinct drives that saw it; candidate_count is the number of members
 #   first_seen    UTC ISO time of the earliest member (drive start + best-frame time)
 #   last_seen     UTC ISO time of the latest member
-#   photo_path    best-frame JPEG of the best-scoring member (crop_path: its crop, may be NULL)
+#   photo_path    BLURRED best-frame JPEG of the best-scoring member (crop_path: its blurred crop, may be
+#                 NULL); candidates whose blur failed do not take part (task 15)
 #   status        new, approved, rejected, reported or possibly_fixed (enforced by a CHECK)
 HAZARD_STATUSES = ("new", "approved", "rejected", "reported", "possibly_fixed")
 HAZARDS_SCHEMA = """
@@ -234,9 +257,11 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(DRIVES_SCHEMA)
         _add_missing_columns(conn, "drives", DRIVES_PIPELINE_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_STATIONARY_COLUMNS)
+        _add_missing_columns(conn, "drives", DRIVES_VIDEO_COLUMNS)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)
+        _add_missing_columns(conn, "candidates", CANDIDATES_BLUR_COLUMNS)
         conn.execute(CANDIDATES_INDEX)
         conn.execute(VERDICTS_SCHEMA)
         conn.execute(VERDICTS_INDEX)

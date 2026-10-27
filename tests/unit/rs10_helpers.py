@@ -184,10 +184,15 @@ def _make_spy_class():
             self.on_detect = on_detect
             self.on_verify = on_verify
             self.detect_calls = []
+            self.image_calls = []
             self.verify_calls = []
             self.events = []
 
         def detect(self, video_path, prompts):
+            # task 15: the privacy blur calls detect() on saved JPEGs; those are not chunk calls
+            if Path(str(video_path)).suffix.lower() in (".jpg", ".jpeg", ".png"):
+                self.image_calls.append({"path": str(video_path), "prompts": list(prompts)})
+                return self.inner.detect(video_path, prompts)
             n = len(self.detect_calls)
             self.detect_calls.append(str(video_path))
             self.events.append("detect")

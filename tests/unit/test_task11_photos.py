@@ -1,4 +1,7 @@
-"""Task 11 backend: serving the best-frame and crop photos of verified hazards."""
+"""Task 11 backend: serving the best-frame and crop photos of verified hazards.
+
+Updated for task 15: the photo route serves only the BLURRED copies (blurred_frame_path / blurred_crop_path).
+"""
 from __future__ import annotations
 
 import re
@@ -35,8 +38,8 @@ def test_photo_served_as_jpeg_matching_best_frame(rs11_done):
         assert r.status_code == 200, (url, r.status_code, r.text[:200])
         assert r.headers["content-type"].split(";")[0].strip() == "image/jpeg"
         assert is_jpeg(r.content), "not a valid JPEG"
-        f = env.resolve_file(rows[str(cid_of(it))]["best_frame_path"])
-        assert f is not None, "best_frame_path %r not found on disk" % rows[str(cid_of(it))]["best_frame_path"]
+        f = env.resolve_file(rows[str(cid_of(it))]["blurred_frame_path"])
+        assert f is not None, "blurred_frame_path %r not found on disk" % rows[str(cid_of(it))]["blurred_frame_path"]
         assert r.content == f.read_bytes()
 
 
@@ -67,7 +70,7 @@ def test_crop_served_if_offered(rs11_done):
         assert r.status_code == 200, (url, r.status_code)
         assert r.headers["content-type"].split(";")[0].strip() == "image/jpeg"
         assert is_jpeg(r.content)
-        f = env.resolve_file(rows[str(cid_of(it))]["crop_path"])
+        f = env.resolve_file(rows[str(cid_of(it))]["blurred_crop_path"])
         assert f is not None
         assert r.content == f.read_bytes()
     if not seen:
@@ -181,15 +184,15 @@ def test_only_candidates_folder_is_served(rs11_done):
                               / "outside-candidates-task11.jpg"),
                "../outside-candidates-task11.jpg", "../../outside-candidates-task11.jpg",
                str(env.db)]
-    original = [r for r in env.all_candidates(did) if str(r["id"]) == str(cid)][0]["best_frame_path"]
+    original = [r for r in env.all_candidates(did) if str(r["id"]) == str(cid)][0]["blurred_frame_path"]
     for t in targets:
-        env.x("UPDATE candidates SET best_frame_path = ? WHERE id = ?", (t, cid))
+        env.x("UPDATE candidates SET blurred_frame_path = ? WHERE id = ?", (t, cid))
         r = env.client.get(url)
         assert r.status_code != 200 or r.content != buf.getvalue(), "served a file outside the candidates folder: %s" % t
         assert not r.content.startswith(b"SQLite format 3")
         assert r.status_code < 500 or r.status_code == 500 and False, "server error for tampered path %s" % t
         assert r.status_code in (400, 403, 404), (t, r.status_code)
-    env.x("UPDATE candidates SET best_frame_path = ? WHERE id = ?", (original, cid))
+    env.x("UPDATE candidates SET blurred_frame_path = ? WHERE id = ?", (original, cid))
     assert env.client.get(url).status_code == 200
 
 
@@ -197,7 +200,7 @@ def test_missing_file_on_disk_is_404_not_500(rs11_done):
     env, did = rs11_done
     it = _first(env, did)
     row = [r for r in env.all_candidates(did) if str(r["id"]) == str(cid_of(it))][0]
-    f = env.resolve_file(row["best_frame_path"])
+    f = env.resolve_file(row["blurred_frame_path"])
     f.unlink()
     r = env.client.get(env.photo_url(it))
     assert r.status_code == 404

@@ -11,11 +11,13 @@ from backend.media import InvalidMedia, ProbeUnavailable, parse_gpx, probe_video
 from backend.pipeline import (
     DriveBusyError,
     DriveNotFoundError,
+    VideoDeletedError,
     claim_drive,
     run_pipeline_in_background,
 )
 from backend.providers import ModelProvider
 from backend.storage import Storage, get_storage
+from backend.video_deletion import delete_video
 
 router = APIRouter(prefix="/api/drives", tags=["drives"])
 
@@ -51,6 +53,8 @@ def _row_to_drive(row) -> dict:
         started + timedelta(seconds=drive["clock_offset_seconds"])
     ).isoformat()
     drive["started_at_fell_back"] = drive["started_at_source"] != SOURCE_VIDEO_METADATA
+    # video_path stays the stored key; these say whether the raw video is gone (Delete video, task 15)
+    drive["video_deleted"] = bool(drive.get("video_deleted_at"))
     return drive
 
 
@@ -122,19 +126,45 @@ def process_drive(
     storage: Storage = Depends(get_storage),
     provider: ModelProvider | None = Depends(get_pipeline_provider),
 ) -> dict:
-    """Start the pipeline (preprocess, detect, aggregate, verify) for a drive as a background job.
+    """Start the pipeline (preprocess, detect, aggregate, verify, blur, deduplicate) for a drive as a
+    background job.
 
     Returns 202 with the drive record (status processing, stage queued) straight away; poll
-    GET /api/drives/{id} for progress. 404 for an unknown drive, 409 if it is already processing.
-    A finished or failed drive can be processed again; its results are replaced.
+    GET /api/drives/{id} for progress. 404 for an unknown drive, 409 if it is already processing
+    and 409 if its raw video was deleted. A finished or failed drive can be processed again; its
+    results are replaced.
     """
     try:
         row = claim_drive(drive_id)
     except DriveNotFoundError:
         raise HTTPException(404, "Drive not found") from None
+    except VideoDeletedError:
+        raise HTTPException(
+            409, "The raw video of this drive was deleted, so it cannot be processed again"
+        ) from None
     except DriveBusyError:
         raise HTTPException(409, "Drive is already processing") from None
     background_tasks.add_task(run_pipeline_in_background, drive_id, storage=storage, provider=provider)
+    return _row_to_drive(row)
+
+
+@router.delete("/{drive_id}/video")
+def delete_drive_video(drive_id: str, storage: Storage = Depends(get_storage)) -> dict:
+    """Delete the drive's raw video, work folder (chunks, frame timestamps) and unblurred candidate
+    frames. The GPX, the database rows and the blurred images stay.
+
+    Returns 200 with the updated drive record (``video_deleted`` true, ``video_deleted_at`` set).
+    Idempotent: deleting again returns the same 200 (and sweeps leftovers). 404 for an unknown
+    drive, 409 while the drive is processing, 500 if a file could not be removed (call again to retry).
+    """
+    try:
+        row = delete_video(drive_id, storage=storage)
+    except DriveNotFoundError:
+        raise HTTPException(404, "Drive not found") from None
+    except DriveBusyError:
+        raise HTTPException(409, "Drive is processing; wait for it to finish before deleting the video") from None
+    except OSError:  # the details were logged by delete_video; nothing path-like goes to the client
+        raise HTTPException(500, "Could not delete everything. Call again to retry.") from None
     return _row_to_drive(row)
 
 

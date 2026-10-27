@@ -11,7 +11,10 @@ heading_tolerance_deg=None)`` does the same work without naming a drive (``dedup
 
 Which candidates take part (everything else is ignored and has ``hazard_id`` NULL): the verdict is
 ``accepted`` and ``is_hazard`` (task 9) AND ``geotag_status = 'ok'`` with a finite ``lat`` in
-[-90, 90] and ``lon`` in [-180, 180] (task 8). The class used is the verdict's ``hazard_class`` (the
+[-90, 90] and ``lon`` in [-180, 180] (task 8) AND the privacy blur did not fail (task 15: ``blur_status`` is not ``'failed'``; such a candidate is
+SKIPPED, never merged, never shown; it counts in ``skipped_count`` and keeps ``hazard_id`` NULL).
+Candidates are not required to have a blurred image, nor do the files have to exist: the hazard takes the
+blurred paths as they are (NULL when there are none) and NEVER falls back to the unblurred ones. The class used is the verdict's ``hazard_class`` (the
 class Muse Spark confirmed, as the results page shows it).
 
 Merge rule. Two participating candidates are *linked* when all hold:
@@ -46,8 +49,8 @@ Hazard values (table ``hazards``, ``backend/db.py``):
   no member has a heading, i.e. a lone candidate without heading).
 - ``lat`` / ``lon``: centroid of the members weighted by verdict confidence (plain mean if all
   weights are 0), rounded to 9 decimals; exactly the member's position for a lone candidate.
-- ``photo_path`` / ``crop_path``: the ``best_frame_path`` / ``crop_path`` of the member with the
-  highest candidate ``score`` (ties: higher verdict confidence, then drive id, track key).
+- ``photo_path`` / ``crop_path``: the BLURRED ``blurred_frame_path`` / ``blurred_crop_path`` of the member
+  with the highest candidate ``score`` (ties: higher verdict confidence, then drive id, track key).
 - ``first_seen`` / ``last_seen``: earliest and latest member time as UTC ISO text. A member's time is
   the drive's ``started_at`` plus the candidate's ``best_timestamp`` seconds; if the drive record or
   its ``started_at`` is unusable, the verdict's ``created_at``, else the time of the run.
@@ -117,7 +120,7 @@ class DedupSummary:
     distance_m: float
     heading_tolerance_deg: float
     candidate_count: int = 0  # the drive's accepted, geotagged candidates that took part
-    skipped_count: int = 0  # the drive's accepted candidates left out (no usable geotag)
+    skipped_count: int = 0  # the drive's accepted candidates left out (no usable geotag, or the blur failed)
     hazard_count: int = 0  # distinct hazards those candidates belong to
     created_count: int = 0
     updated_count: int = 0
@@ -168,13 +171,14 @@ def _resolve_params(distance_m: Any, heading_tolerance_deg: Any) -> tuple[float,
 # ----- loading -----------------------------------------------------------------------------
 
 _ELIGIBLE_SQL = (
-    "SELECT c.id, c.drive_id, c.track_key, c.best_timestamp, c.best_frame_path, c.crop_path, "
+    "SELECT c.id, c.drive_id, c.track_key, c.best_timestamp, c.blurred_frame_path, c.blurred_crop_path, "
     "c.lat, c.lon, c.heading, c.score, v.hazard_class AS cls, v.severity, v.confidence, "
     "v.created_at AS verdict_created, d.started_at "
     "FROM candidates c JOIN verdicts v ON v.candidate_id = c.id "
     "LEFT JOIN drives d ON d.id = c.drive_id "
     "WHERE v.accepted = 1 AND v.is_hazard = 1 AND c.geotag_status = 'ok' "
-    "AND c.lat IS NOT NULL AND c.lon IS NOT NULL"
+    "AND c.lat IS NOT NULL AND c.lon IS NOT NULL "
+    "AND (c.blur_status IS NULL OR c.blur_status != 'failed')"
 )
 
 
@@ -211,8 +215,8 @@ def _load_members(conn: Any, now: datetime) -> list[dict[str, Any]]:
             "drive_id": row["drive_id"],
             "track_key": row["track_key"],
             "best_timestamp": row["best_timestamp"],
-            "photo_path": row["best_frame_path"],
-            "crop_path": row["crop_path"],
+            "photo_path": row["blurred_frame_path"],  # only blurred images ever reach a hazard
+            "crop_path": row["blurred_crop_path"],
             "lat": float(lat),
             "lon": float(lon),
             "heading": heading,

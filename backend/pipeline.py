@@ -1,4 +1,4 @@
-"""Pipeline runner (task 10): preprocess, detect, aggregate and verify one drive as a single job.
+"""Pipeline runner (task 10): preprocess, detect, aggregate, verify, blur and dedup one drive as one job.
 
     from backend.pipeline import run_pipeline
     result = run_pipeline(drive_id)           # synchronous; the API runs it as a background task
@@ -14,14 +14,17 @@ Stages, in order (each one is the function of an earlier task):
                                                 started_at and clock_offset_seconds
     verifying      verify_drive       (task 9)  candidates -> verdicts (chunks= passed, so the frames
                                                 next to the best frame are attached)
-    deduplicating  deduplicate_drive  (task 14) accepted geotagged candidates -> hazards table, merged
-                                                with the hazards of this and earlier drives
+    blurring       blur_drive         (task 15) saved best frame + crop of every ACCEPTED candidate ->
+                                                SAM 3.1 'face' / 'license plate' masks -> blurred copies
+                                                (*_best_blur.jpg, *_crop_blur.jpg); fails closed
+    deduplicating  deduplicate_drive  (task 14) accepted, geotagged, BLURRED candidates -> hazards table,
+                                                merged with the hazards of this and earlier drives
 
 Drive status and stage (columns of the ``drives`` table, also keys of the drive JSON):
 
     status  uploaded -> processing -> done | failed        (a finished or failed drive can run again)
     stage   NULL (never run), queued, preprocessing, detecting, aggregating, verifying,
-            deduplicating, done, failed
+            blurring, deduplicating, done, failed
     error   NULL unless status is failed; then "<stage>: <message>" (see below)
     failed_stage  the stage that raised (preprocessing, ...), only when status is failed
     updated_at    UTC ISO time of the last status or stage change
@@ -46,9 +49,11 @@ here; no key is read or logged by this module.
 Files, all under ``<storage>/<drive id>/`` (the same folder the upload lives in, so
 ``storage.delete_drive`` removes everything together):
 
-    video.<ext>, track.gpx      the upload; NEVER modified or deleted by the pipeline
+    video.<ext>, track.gpx      the upload; NEVER modified or deleted by the pipeline (only the Delete
+                                video button removes the video, see backend/video_deletion.py)
     work/                       chunk_0000.mp4 ..., frame_timestamps.json (kept after a run for reruns)
-    candidates/                 best-frame and crop JPEGs written by aggregate_drive
+    candidates/                 best-frame and crop JPEGs written by aggregate_drive (unblurred, local
+                                only) and their blurred copies *_blur.jpg written by blur_drive
 
 Failure behaviour:
 
@@ -65,6 +70,12 @@ Failure behaviour:
   with each other, and nothing exists for S or later stages (no stale rows from an older run).
   Examples: verifying fails -> detections and candidates stay, no verdicts; detecting fails -> only
   the preprocessed chunks stay. Each stage is itself all-or-nothing (see its module).
+- Blurring fails closed (``backend/privacy.py``): if the provider fails or returns invalid masks for any
+  accepted candidate, that candidate gets ``blur_status = 'failed'`` and no blurred image, and the drive ends
+  ``failed`` with ``error = "blurring: ..."``; the detections, candidates and verdicts of this run stay, and
+  there are no hazards (deduplication did not run). A drive with no accepted candidates makes no blur call.
+- A drive whose raw video was deleted (``drives.video_deleted_at``) cannot be processed again:
+  ``claim_drive`` raises ``VideoDeletedError`` (HTTP 409), and nothing of its kept results is cleared.
 - Re-running a done or failed drive clears and replaces its results. The upload is never touched.
   The ``hazards`` table is shared by all drives: clearing a drive's candidates also recomputes the
   hazards they belonged to (see ``backend/dedup.py``), and a failure at ``deduplicating`` leaves the
@@ -89,6 +100,7 @@ from . import config
 from .candidates import AggregationSummary, aggregate_drive
 from .db import get_connection, init_db
 from . import dedup as _dedup
+from .privacy import BlurSummary, blur_drive
 from .dedup import DedupSummary, refresh_hazards_quietly
 from .detection import DetectionSummary, run_detection
 from .preprocess import PreprocessResult, preprocess_video
@@ -107,11 +119,13 @@ STAGE_PREPROCESSING = "preprocessing"
 STAGE_DETECTING = "detecting"
 STAGE_AGGREGATING = "aggregating"
 STAGE_VERIFYING = "verifying"
+STAGE_BLURRING = "blurring"
 STAGE_DEDUPLICATING = "deduplicating"
 STAGE_DONE = "done"
 STAGE_FAILED = "failed"
 
-STAGES = (STAGE_PREPROCESSING, STAGE_DETECTING, STAGE_AGGREGATING, STAGE_VERIFYING, STAGE_DEDUPLICATING)
+STAGES = (STAGE_PREPROCESSING, STAGE_DETECTING, STAGE_AGGREGATING, STAGE_VERIFYING, STAGE_BLURRING,
+          STAGE_DEDUPLICATING)
 
 MAX_ERROR_CHARS = 500
 WORK_DIR_NAME = "work"
@@ -124,6 +138,10 @@ class DriveNotFoundError(LookupError):
 
 class DriveBusyError(RuntimeError):
     """The drive is already processing."""
+
+
+class VideoDeletedError(RuntimeError):
+    """The drive's raw video was deleted on request, so it cannot be processed again."""
 
 
 @dataclass
@@ -139,6 +157,7 @@ class PipelineResult:
     detection: DetectionSummary | None = None
     aggregation: AggregationSummary | None = None
     verification: VerificationSummary | None = None
+    blur: BlurSummary | None = None
     dedup: DedupSummary | None = None
 
     @property
@@ -213,7 +232,8 @@ def claim_drive(drive_id: str, *, db_path: str | Path | None = None) -> dict[str
     """Atomically start a run: status processing, stage queued, error cleared. Returns the drive row.
 
     One UPDATE decides the winner, so concurrent callers cannot both claim a drive.
-    Raises ``DriveNotFoundError`` for an unknown id and ``DriveBusyError`` if already processing.
+    Raises ``DriveNotFoundError`` for an unknown id, ``DriveBusyError`` if already processing and
+    ``VideoDeletedError`` if the drive's raw video was deleted (it cannot be processed again).
     """
     db = init_db(db_path)
     now = _now()
@@ -222,7 +242,7 @@ def claim_drive(drive_id: str, *, db_path: str | Path | None = None) -> dict[str
         with conn:
             cur = conn.execute(
                 "UPDATE drives SET status = ?, stage = ?, error = NULL, failed_stage = NULL,"
-                " finished_at = NULL, updated_at = ? WHERE id = ? AND status != ?",
+                " finished_at = NULL, updated_at = ? WHERE id = ? AND status != ? AND video_deleted_at IS NULL",
                 (STATUS_PROCESSING, STAGE_QUEUED, now, drive_id, STATUS_PROCESSING),
             )
             claimed = cur.rowcount == 1
@@ -232,6 +252,9 @@ def claim_drive(drive_id: str, *, db_path: str | Path | None = None) -> dict[str
     if row is None:
         raise DriveNotFoundError(f"drive not found: {drive_id}")
     if not claimed:
+        if row["video_deleted_at"]:
+            raise VideoDeletedError(
+                f"the raw video of drive {drive_id} was deleted, so it cannot be processed again")
         raise DriveBusyError(f"drive {drive_id} is already processing")
     return dict(row)
 
@@ -259,12 +282,14 @@ def recover_interrupted(*, db_path: str | Path | None = None) -> int:
 
 def clear_results(drive_id: str, *, db_path: str | Path | None = None, work_dir: Path | None = None) -> None:
     """Delete a drive's derived results: detections, candidates (their verdicts go with them),
-    the candidate images and, when given, the work folder. Never touches the upload."""
+    the candidate images (unblurred and blurred) and, when given, the work folder. Never touches the
+    upload."""
     db = init_db(db_path)
     conn = get_connection(db)
     try:
         old = conn.execute(
-            "SELECT best_frame_path, crop_path FROM candidates WHERE drive_id = ?", (drive_id,)
+            "SELECT best_frame_path, crop_path, blurred_frame_path, blurred_crop_path "
+            "FROM candidates WHERE drive_id = ?", (drive_id,)
         ).fetchall()
         with conn:
             conn.execute("DELETE FROM verdicts WHERE drive_id = ?", (drive_id,))
@@ -305,8 +330,9 @@ def run_pipeline(
     stationary_speed_mps: float | None = None,
     distance_m: float | None = None,
     heading_tolerance_deg: float | None = None,
+    blur_dilate_px: int | None = None,
 ) -> PipelineResult:
-    """Run the five stages for one drive and record progress, errors and the outcome in the
+    """Run the six stages for one drive and record progress, errors and the outcome in the
     ``drives`` row. See the module docstring.
 
     ``provider``, ``db_path`` and ``storage`` default to the configured ones. ``work_dir`` defaults to
@@ -317,7 +343,8 @@ def run_pipeline(
     ``skip_stationary`` / ``stationary_speed_mps`` switch and tune the stationary-frame filter of the
     detecting stage (task 13; None means ROADSCOUT_SKIP_STATIONARY / ROADSCOUT_STATIONARY_SPEED_MPS).
     ``distance_m`` / ``heading_tolerance_deg`` tune the deduplicating stage (task 14; None means
-    ROADSCOUT_DEDUP_DISTANCE_M / ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG).
+    ROADSCOUT_DEDUP_DISTANCE_M / ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG). ``blur_dilate_px`` is the margin the
+    blurring stage grows each mask by (None means ROADSCOUT_BLUR_DILATE_PX, 4).
     """
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
@@ -341,8 +368,13 @@ def run_pipeline(
         work = Path(work_dir) if work_dir is not None else storage.local_path(f"{drive_id}/{WORK_DIR_NAME}")
         candidates_dir = storage.local_path(f"{drive_id}/{CANDIDATES_DIR_NAME}")
 
+        if drive.get("video_deleted_at"):  # before clearing: the kept blurred results must survive
+            raise FileNotFoundError("the raw video was deleted, so this drive cannot be processed again")
+
         # Start from a clean slate so a failure never leaves stale rows from an older run.
         clear_results(drive_id, db_path=db, work_dir=work if default_work else None)
+        for stale in Path(candidates_dir).glob("*_blur.jpg*"):  # leftovers of a crashed earlier run
+            stale.unlink(missing_ok=True)
         _update(db, drive_id, frames_total=0, stationary_frames_skipped=0, stationary_chunks_skipped=0,
                 chunks_sent=0, stationary_note=None)
 
@@ -390,6 +422,11 @@ def run_pipeline(
             min_confidence=min_confidence,
             db_path=db,
         )
+
+        stage = STAGE_BLURRING
+        _update(db, drive_id, stage=stage)
+        result.blur = blur_drive(drive_id, provider=provider, db_path=db,
+                                dilate_px=blur_dilate_px)
 
         stage = STAGE_DEDUPLICATING
         _update(db, drive_id, stage=stage)

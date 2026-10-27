@@ -156,9 +156,12 @@ def add_cand(db, drive_id, lat, lon, heading, *, cls="pothole", score=0.5, conf=
         cur = con.execute(
             "INSERT INTO candidates (drive_id, hazard_id, hazard_class, track_key, track_id, chunk, first_timestamp, "
             "last_timestamp, frames_seen, max_mask_area, best_frame_index, best_timestamp, best_box, "
-            "best_frame_path, crop_path, lat, lon, heading, score, geotag_status, geotag_note) "
-            "VALUES (?, NULL, ?, ?, ?, 0, ?, ?, 5, 100.0, 30, ?, '[0, 0, 10, 10]', ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "best_frame_path, crop_path, blurred_frame_path, blurred_crop_path, blur_status, "
+            "lat, lon, heading, score, geotag_status, geotag_note) "
+            "VALUES (?, NULL, ?, ?, ?, 0, ?, ?, 5, 100.0, 30, ?, '[0, 0, 10, 10]', ?, ?, ?, ?, 'ok', ?, ?, ?, ?, ?, NULL)",
             (drive_id, cls, "0:%d" % n, n, best_ts - 1, best_ts + 1, best_ts, frame_path, crop_path,
+             # task 15: dedup takes the hazard photo from the BLURRED paths; the test rows use the same paths
+             frame_path, crop_path,
              lat if geotag == "ok" else None, lon if geotag == "ok" else None,
              heading if geotag == "ok" else None, score, geotag))
         cid = cur.lastrowid

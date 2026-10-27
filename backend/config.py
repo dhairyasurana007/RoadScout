@@ -182,6 +182,33 @@ def dedup_heading_tolerance_deg() -> float:
     )
 
 
+# --- Privacy blur settings (task 15) ----------------------------------------
+
+DEFAULT_BLUR_DILATE_PX = 4
+
+
+def privacy_prompts_path() -> Path:
+    """JSON file holding the SAM 3.1 privacy prompts (face, license plate).
+    Set ROADSCOUT_PRIVACY_PROMPTS (default: config/privacy_prompts.json)."""
+    raw = (os.environ.get("ROADSCOUT_PRIVACY_PROMPTS") or "").strip()
+    return Path(raw) if raw else ROOT / "config" / "privacy_prompts.json"
+
+
+def blur_dilate_px() -> int:
+    """How many pixels each privacy mask is grown before blurring. Set ROADSCOUT_BLUR_DILATE_PX to a
+    whole number from 0 to 100 (default 4); an invalid value raises ValueError. Read at call time."""
+    raw = os.environ.get("ROADSCOUT_BLUR_DILATE_PX")
+    if raw is None or not raw.strip():
+        return DEFAULT_BLUR_DILATE_PX
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"ROADSCOUT_BLUR_DILATE_PX must be a whole number from 0 to 100, got {raw!r}") from None
+    if not (0 <= value <= 100) or value != int(value):  # also rejects NaN
+        raise ValueError(f"ROADSCOUT_BLUR_DILATE_PX must be a whole number from 0 to 100, got {raw!r}")
+    return int(value)
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0
