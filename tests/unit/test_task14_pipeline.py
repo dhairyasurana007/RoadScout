@@ -126,7 +126,8 @@ def test_stage_list_has_deduplicating_after_verifying():
     assert "blurring" in stages, "STAGES = %r" % (stages,)
     assert stages.index("blurring") == stages.index("verifying") + 1
     assert stages.index("deduplicating") == stages.index("blurring") + 1
-    assert stages[-1] == "deduplicating"
+    # task 19 may append one fix-check stage after deduplicating
+    assert stages.index("deduplicating") >= len(stages) - 2
 
 
 def test_processed_drive_ends_done_with_hazards(env):

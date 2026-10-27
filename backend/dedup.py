@@ -675,6 +675,9 @@ def review_hazard(
     says they submitted the report themselves" and is only allowed while the hazard is approved or already
     reported, else ``ReviewConflict`` (a ``ValueError``); it leaves ``reviewed_at`` alone.
 
+    Changing the status of a ``possibly_fixed`` hazard (task 19) also records ``fix_check_dismissed_at`` = now and
+    clears ``previous_status``, ``possibly_fixed_at`` and ``fix_misses`` (see ``backend/possibly_fixed.py``).
+
     Bookkeeping: ``updated_at`` always changes; ``reviewed_at`` is set when the status becomes approved or
     rejected and cleared when it becomes new. A class or severity that differs from the automatic one sets
     ``class_edited`` / ``severity_edited`` to 1 and records the automatic value in ``original_hazard_class``
@@ -718,6 +721,10 @@ def review_hazard(
                     raise ReviewConflict(
                         f"only an approved hazard can be marked as reported; this one is {row['status']}")
                 sets["status"] = status
+                if row["status"] == "possibly_fixed":
+                    # The user answered the possibly-fixed flag (task 19): passes before now no longer count.
+                    sets["fix_check_dismissed_at"] = now
+                    sets["previous_status"], sets["possibly_fixed_at"], sets["fix_misses"] = None, None, 0
                 if status != "reported":  # reporting an approved hazard keeps the time it was approved
                     sets["reviewed_at"] = now if status in ("approved", "rejected") else None
             if agency is not _UNSET:

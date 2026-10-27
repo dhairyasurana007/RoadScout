@@ -195,7 +195,7 @@ result = run_pipeline(drive_id)      # synchronous; returns a PipelineResult, st
 
 API: `POST /api/drives/{id}/process` (no body) starts the job in the background and returns `202` with the drive record straight away (`status: processing`, `stage: queued`). It returns `404` for an unknown drive and `409` if the drive is already processing (the claim is one atomic `UPDATE`, so concurrent requests cannot start two runs). A `done` or `failed` drive can be processed again; its results are replaced. Poll `GET /api/drives/{id}` for progress.
 
-- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, `blurring`, `deduplicating`, then `done` or `failed`. Both are committed before each stage starts.
+- **Status** goes `uploaded` -> `processing` -> `done` or `failed`. **Stage** (`stage` column and JSON key) is `queued`, `preprocessing`, `detecting`, `aggregating`, `verifying`, `blurring`, `deduplicating`, `checking_fixes`, then `done` or `failed`. Both are committed before each stage starts.
 - **Errors**: on any exception the drive gets `status: failed`, `stage: failed`, `failed_stage` (the stage that raised) and `error` = `"<stage>: <message>"`, on one line, cut to 500 characters, with the Meta key and bearer tokens replaced by `***`. No stack trace goes into the API. `error` is NULL on success and cleared when a run starts. Other columns added to `drives`: `updated_at`, `finished_at` (existing databases are migrated by `init_db`).
 - **What is kept after a failure**: each run first clears the drive's old detections, candidates (with verdicts and images) and work folder, so a failure at stage S leaves only the results of the stages before S from this run, and nothing stale. Each stage is all-or-nothing. A GPX that is out of range or unusable is not a failure: candidates get `geotag_status` `out_of_range` or `no_gps` and the drive ends `done`.
 - **Files** live under `data/storage/<drive id>/`: the upload (never modified or deleted), `work/` (chunks and `frame_timestamps.json`, kept after the run) and `candidates/` (best-frame and crop JPEGs, unblurred and local only, plus their blurred copies `*_blur.jpg`). Only the Delete video button removes the upload (see below).
@@ -220,6 +220,24 @@ set_hazard_status(1, "approved")            # new, approved, rejected, reported,
 - **Table `hazards`**: `id`, `hazard_class`, `lat`, `lon`, `direction`, `severity`, `confidence`, `sightings`, `candidate_count`, `first_seen`, `last_seen`, `photo_path`, `crop_path`, `status` (default `new`, CHECK-constrained), `created_at`, `updated_at`. `candidates.hazard_id` links each member.
 - **Re-runs**: idempotent, one transaction. Surviving hazards keep their id, status and `created_at`; new sightings join an existing hazard; hazards with no member candidates left are deleted; other drives' hazards are recomputed to the same values. `clear_results` and `aggregate_drive` reconcile the table when they delete candidates, so a failed re-run leaves no hazard without candidates. If a drive is reprocessed and its only hazards had no other drive's sightings, they come back with new ids.
 - **Pipeline**: a failure raises `deduplicating: ...` on the drive (`failed_stage = 'deduplicating'`); the stage is rolled back as a whole.
+
+## Possibly-fixed detection
+
+`backend/possibly_fixed.py` marks a hazard as possibly fixed when later drives pass it without seeing it. It runs as the last pipeline stage, `checking_fixes` (after `deduplicating`), or on its own:
+
+```python
+from backend.possibly_fixed import check_possibly_fixed
+summary = check_possibly_fixed()   # check_possibly_fixed(*, db_path=None, storage=None, radius_m=None, heading_tolerance_deg=None, min_misses=None, include_drive_ids=None)
+```
+
+- **Settings** (read at call time, a parameter beats the variable, invalid values raise `ValueError`): `ROADSCOUT_FIXED_RADIUS_M` (default 25 m), `ROADSCOUT_FIXED_HEADING_TOLERANCE_DEG` (default 45, wrap-around aware) and `ROADSCOUT_FIXED_MISSES` (default 3). The moving test uses `ROADSCOUT_STATIONARY_SPEED_MPS` (a speed at or above it is moving).
+- **A pass**: a `done` drive (the drive being processed counts too) whose GPX track comes within the radius of the hazard while moving, heading within the tolerance of the hazard's direction (not restricted if the direction is unknown), at a time inside the drive's recording (`started_at + clock_offset_seconds` to that plus `duration_seconds`; the track span if the duration is unknown). A drive whose GPX is missing or unparseable is skipped. Each GPX is parsed once per run.
+- **Later drives** are those that started after the hazard's `last_seen` (and after the last dismissal), in `started_at` order. A drive with a member candidate of the hazard is a sighting and resets the count; a drive that only passes is a miss. Reaching the minimum number of consecutive misses sets the status to `possibly_fixed`.
+- **Flagging** applies to `new`, `approved` and `reported` hazards; `rejected` ones are never touched. `previous_status`, `possibly_fixed_at` and `fix_misses` (shown as `misses`) are stored; `reviewed_at`, edits and the agency choice stay. When the hazard is seen again its count falls below the minimum and it goes back to `previous_status`.
+- **Dismissal**: changing the status of a possibly fixed hazard in the review UI (Approve, Reject or Reset; `PATCH`) stores `fix_check_dismissed_at`; drives that started before that moment are ignored, so it is flagged again only after the minimum number of further misses. Editing the class, severity or agency does not dismiss. `possibly_fixed` itself cannot be set through the API.
+- **Idempotent**: the count is recomputed from the stored data every run, so running twice changes nothing and re-processing a drive does not count it twice. New columns (`previous_status`, `possibly_fixed_at`, `fix_misses`, `fix_check_dismissed_at`) are added by `init_db`; `GET /api/hazards` and the `PATCH` response gain `misses`, `possibly_fixed_at` and `previous_status`.
+- **UI**: a possibly fixed hazard has a "Possibly fixed" badge, an orange dashed pin, the note "Not seen on N later drives" with the flag time and its previous status, a hint that Approve, Reject or Reset dismisses the flag, a status filter option, and no prefilled report until it is approved again (the report endpoint answers 409).
+- **Pipeline**: a failure raises `checking_fixes: ...` on the drive (`failed_stage = 'checking_fixes'`); the stage is all-or-nothing.
 
 ## Privacy blur
 

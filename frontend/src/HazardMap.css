@@ -23,7 +23,7 @@
 .rs-pin[data-status="approved"] { background: #2e7d32; }
 .rs-pin[data-status="rejected"] { background: #757575; }
 .rs-pin[data-status="reported"] { background: #6a1b9a; }
-.rs-pin[data-status="possibly_fixed"] { background: #ef6c00; }
+.rs-pin[data-status="possibly_fixed"] { background: #ef6c00; border-style: dashed; }
 
 .rs-pin[data-selected="true"] {
   border-color: #ffeb3b;
@@ -120,6 +120,21 @@
 .rs-badge[data-status="rejected"] { background: #eeeeee; color: #424242; }
 .rs-badge[data-status="reported"] { background: #f3e5f5; color: #4a148c; }
 .rs-badge[data-status="possibly_fixed"] { background: #fff3e0; color: #8a4500; }
+
+.rs-fix-note {
+  margin: 0.2rem 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-left: 4px solid #ef6c00;
+  background: #fff3e0;
+  color: #5d3000;
+  font-size: 12px;
+}
+.rs-popup .rs-fix-note {
+  margin: 0.3rem 0;
+}
+.rs-hint p {
+  margin: 0.2rem 0;
+}
 
 .rs-edited {
   margin-left: 0.4em;

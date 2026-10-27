@@ -35,7 +35,8 @@ def test_stage_list_has_blurring_between_verifying_and_deduplicating():
     assert "blurring" in stages, "STAGES = %r" % (stages,)
     assert stages.index("blurring") == stages.index("verifying") + 1
     assert stages.index("deduplicating") == stages.index("blurring") + 1
-    assert stages[-1] == "deduplicating"
+    # task 19 may append one fix-check stage after deduplicating
+    assert stages.index("deduplicating") >= len(stages) - 2
 
 
 # ------------------------------------------------------------------ what the provider is asked

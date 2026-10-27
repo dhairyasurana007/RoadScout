@@ -238,6 +238,21 @@ AGENCY_OVERRIDES = ("VDOT", "MDOT SHA", "none")
 HAZARDS_AGENCY_COLUMNS = {
     "agency_override": "TEXT",
 }
+# Columns added to hazards by the possibly-fixed check (task 19, written by backend/possibly_fixed.py and
+# review_hazard), same idempotent migration. Deduplication never writes them, so they survive every re-run and
+# stay on an adopted hazard:
+#   previous_status          the status the hazard had when it was flagged possibly_fixed (restored when it is seen
+#                            again); NULL while it is not flagged
+#   possibly_fixed_at        UTC ISO time the check flagged it; NULL while it is not flagged
+#   fix_misses               consecutive later drives that passed it without a sighting (0 when none)
+#   fix_check_dismissed_at   UTC ISO time the user last changed the status of a possibly_fixed hazard; passes before
+#                            it are ignored by the check
+HAZARDS_FIX_COLUMNS = {
+    "previous_status": "TEXT",
+    "possibly_fixed_at": "TEXT",
+    "fix_misses": "INTEGER DEFAULT 0",
+    "fix_check_dismissed_at": "TEXT",
+}
 HAZARDS_INDEX = "CREATE INDEX IF NOT EXISTS idx_hazards_class ON hazards (hazard_class, lat, lon)"
 CANDIDATES_HAZARD_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_candidates_hazard ON candidates (hazard_id)"
@@ -293,6 +308,7 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(HAZARDS_SCHEMA)
         _add_missing_columns(conn, "hazards", HAZARDS_REVIEW_COLUMNS)
         _add_missing_columns(conn, "hazards", HAZARDS_AGENCY_COLUMNS)
+        _add_missing_columns(conn, "hazards", HAZARDS_FIX_COLUMNS)
         conn.execute(HAZARDS_INDEX)
         conn.execute(CANDIDATES_HAZARD_INDEX)
         conn.commit()

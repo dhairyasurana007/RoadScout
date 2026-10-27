@@ -1,4 +1,4 @@
-"""Pipeline runner (task 10): preprocess, detect, aggregate, verify, blur and dedup one drive as one job.
+"""Pipeline runner (task 10): preprocess, detect, aggregate, verify, blur, dedup and check fixes for one drive as one job.
 
     from backend.pipeline import run_pipeline
     result = run_pipeline(drive_id)           # synchronous; the API runs it as a background task
@@ -19,12 +19,15 @@ Stages, in order (each one is the function of an earlier task):
                                                 (*_best_blur.jpg, *_crop_blur.jpg); fails closed
     deduplicating  deduplicate_drive  (task 14) accepted, geotagged, BLURRED candidates -> hazards table,
                                                 merged with the hazards of this and earlier drives
+    checking_fixes check_possibly_fixed (task 19) every hazard vs every finished drive (and this one): later
+                                                drives that pass a hazard without a sighting flag it as
+                                                possibly fixed; a hazard seen again is restored
 
 Drive status and stage (columns of the ``drives`` table, also keys of the drive JSON):
 
     status  uploaded -> processing -> done | failed        (a finished or failed drive can run again)
     stage   NULL (never run), queued, preprocessing, detecting, aggregating, verifying,
-            blurring, deduplicating, done, failed
+            blurring, deduplicating, checking_fixes, done, failed
     error   NULL unless status is failed; then "<stage>: <message>" (see below)
     failed_stage  the stage that raised (preprocessing, ...), only when status is failed
     updated_at    UTC ISO time of the last status or stage change
@@ -80,6 +83,8 @@ Failure behaviour:
   The ``hazards`` table is shared by all drives: clearing a drive's candidates also recomputes the
   hazards they belonged to (see ``backend/dedup.py``), and a failure at ``deduplicating`` leaves the
   detections, candidates and verdicts of this run in place with the hazards table rolled back.
+- The checking_fixes stage (task 19) is global (all hazards, all done drives plus this one) and all-or-nothing; a
+  failure ends the drive ``failed`` with ``error = "checking_fixes: ..."`` while this run's hazards stay.
 - A server restart while a drive is processing leaves it stuck at ``processing``; ``recover_interrupted``
   (called when the app starts) marks such drives failed with "interrupted: ...". Run one server
   process only.
@@ -102,6 +107,8 @@ from .db import get_connection, init_db
 from . import dedup as _dedup
 from .privacy import BlurSummary, blur_drive
 from .dedup import DedupSummary, refresh_hazards_quietly
+from . import possibly_fixed as _possibly_fixed
+from .possibly_fixed import FixCheckSummary
 from .detection import DetectionSummary, run_detection
 from .preprocess import PreprocessResult, preprocess_video
 from .providers import ModelProvider, get_provider
@@ -121,11 +128,12 @@ STAGE_AGGREGATING = "aggregating"
 STAGE_VERIFYING = "verifying"
 STAGE_BLURRING = "blurring"
 STAGE_DEDUPLICATING = "deduplicating"
+STAGE_CHECKING_FIXES = "checking_fixes"
 STAGE_DONE = "done"
 STAGE_FAILED = "failed"
 
 STAGES = (STAGE_PREPROCESSING, STAGE_DETECTING, STAGE_AGGREGATING, STAGE_VERIFYING, STAGE_BLURRING,
-          STAGE_DEDUPLICATING)
+          STAGE_DEDUPLICATING, STAGE_CHECKING_FIXES)
 
 MAX_ERROR_CHARS = 500
 WORK_DIR_NAME = "work"
@@ -159,6 +167,7 @@ class PipelineResult:
     verification: VerificationSummary | None = None
     blur: BlurSummary | None = None
     dedup: DedupSummary | None = None
+    fixes: FixCheckSummary | None = None
 
     @property
     def ok(self) -> bool:
@@ -172,6 +181,12 @@ def deduplicate_drive(*args: Any, **kwargs: Any) -> DedupSummary:
     """The deduplicating stage. Looks ``backend.dedup.deduplicate_drive`` up at call time, so patching
     either that name or ``backend.pipeline.deduplicate_drive`` replaces the stage."""
     return _dedup.deduplicate_drive(*args, **kwargs)
+
+
+def check_possibly_fixed(*args: Any, **kwargs: Any) -> FixCheckSummary:
+    """The checking_fixes stage. Looks ``backend.possibly_fixed.check_possibly_fixed`` up at call time, so patching
+    either that name or ``backend.pipeline.check_possibly_fixed`` replaces the stage."""
+    return _possibly_fixed.check_possibly_fixed(*args, **kwargs)
 
 
 def _now() -> str:
@@ -332,7 +347,7 @@ def run_pipeline(
     heading_tolerance_deg: float | None = None,
     blur_dilate_px: int | None = None,
 ) -> PipelineResult:
-    """Run the six stages for one drive and record progress, errors and the outcome in the
+    """Run the seven stages for one drive and record progress, errors and the outcome in the
     ``drives`` row. See the module docstring.
 
     ``provider``, ``db_path`` and ``storage`` default to the configured ones. ``work_dir`` defaults to
@@ -433,6 +448,11 @@ def run_pipeline(
         result.dedup = deduplicate_drive(
             drive_id, db_path=db, distance_m=distance_m, heading_tolerance_deg=heading_tolerance_deg
         )
+
+        stage = STAGE_CHECKING_FIXES
+        _update(db, drive_id, stage=stage)
+        # This drive is still "processing" here, so it is named: its sighting (or its pass) counts.
+        result.fixes = check_possibly_fixed(db_path=db, storage=storage, include_drive_ids=[drive_id])
     except Exception as exc:
         message = clean_error_message(exc, stage)
         logger.warning("pipeline failed for drive %s at %s: %s", drive_id, stage, message,

@@ -182,6 +182,40 @@ def dedup_heading_tolerance_deg() -> float:
     )
 
 
+# --- Possibly-fixed settings (task 19) --------------------------------------
+
+DEFAULT_FIX_RADIUS_M = 25.0
+DEFAULT_FIX_HEADING_TOLERANCE_DEG = 45.0
+DEFAULT_FIX_MIN_MISSES = 3
+
+
+def fix_radius_m() -> float:
+    """How close (metres, inclusive) a later drive's GPS track must come to a hazard to count as passing it.
+    Set ROADSCOUT_FIXED_RADIUS_M to a number of 0 or more (default 25); an invalid value raises ValueError."""
+    return _bounded_number("ROADSCOUT_FIXED_RADIUS_M", DEFAULT_FIX_RADIUS_M, 0.0, 1e7)
+
+
+def fix_heading_tolerance_deg() -> float:
+    """Largest difference (degrees, inclusive, wrap-around aware) between the heading of a passing drive and the
+    hazard's direction. Set ROADSCOUT_FIXED_HEADING_TOLERANCE_DEG to a number from 0 to 180 (default 45)."""
+    return _bounded_number("ROADSCOUT_FIXED_HEADING_TOLERANCE_DEG", DEFAULT_FIX_HEADING_TOLERANCE_DEG, 0.0, 180.0)
+
+
+def fix_min_misses() -> int:
+    """Consecutive later drives that pass a hazard without seeing it before it is marked possibly fixed.
+    Set ROADSCOUT_FIXED_MISSES to a whole number of 1 or more (default 3); an invalid value raises ValueError."""
+    raw = os.environ.get("ROADSCOUT_FIXED_MISSES")
+    if raw is None or not raw.strip():
+        return DEFAULT_FIX_MIN_MISSES
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"ROADSCOUT_FIXED_MISSES must be a whole number of 1 or more, got {raw!r}") from None
+    if not (1 <= value < float("inf")) or value != int(value):  # also rejects NaN
+        raise ValueError(f"ROADSCOUT_FIXED_MISSES must be a whole number of 1 or more, got {raw!r}")
+    return int(value)
+
+
 # --- Privacy blur settings (task 15) ----------------------------------------
 
 DEFAULT_BLUR_DILATE_PX = 4

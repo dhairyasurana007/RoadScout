@@ -294,6 +294,10 @@ class GpxTrack:
     def duration_seconds(self) -> float:
         return self._rel[-1]
 
+    def samples(self) -> list[tuple[float, float, float]]:
+        """``(seconds after start_time, latitude, longitude)`` of every kept point, in time order (a copy)."""
+        return list(zip(self._rel, self._lat, self._lon))
+
     # ----- lookup -------------------------------------------------------------------------
 
     def _gps_offset(self, video_start, clock_offset_seconds) -> float:

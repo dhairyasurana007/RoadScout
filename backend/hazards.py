@@ -15,7 +15,11 @@ because a file is missing. No filesystem path is returned. The list and photo ro
 Besides the keys of task 16 every item has ``agency`` (``"VDOT"``, ``"MDOT SHA"`` or ``null`` = no agency, the one
 in use), ``agency_source`` (``"auto"`` or ``"user"``) and ``automatic_agency`` (task 18), ``reviewed_at`` (UTC ISO text or null), ``class_edited`` and
 ``severity_edited`` (booleans) and ``original_hazard_class`` / ``original_severity`` (the automatic value
-while the field is edited, else null).
+while the field is edited, else null). Task 19 adds ``misses`` (integer: the consecutive later drives that passed
+the hazard without seeing it), ``possibly_fixed_at`` (UTC ISO text, set while the status is possibly_fixed) and
+``previous_status`` (the status to come back to when it is seen again; null unless flagged). ``possibly_fixed`` is
+set only by the system (``backend/possibly_fixed.py``); a PATCH that changes the status of a possibly fixed hazard
+dismisses the flag.
 
 PATCH /api/hazards/{id}, the review endpoint. JSON object body, every field optional but at least one is
 required: ``status`` ("new", "approved", "rejected" or "reported"; "reported" means the user says they submitted
@@ -138,6 +142,9 @@ def _hazard_json(row: dict[str, Any], root: Path, originals: set[Path]) -> dict[
         "last_seen": row["last_seen"],
         "status": row["status"],
         "reviewed_at": row.get("reviewed_at"),
+        "misses": int(row.get("fix_misses") or 0),
+        "possibly_fixed_at": row.get("possibly_fixed_at"),
+        "previous_status": row.get("previous_status"),
         "class_edited": bool(row.get("class_edited")),
         "severity_edited": bool(row.get("severity_edited")),
         "original_hazard_class": row.get("original_hazard_class"),

@@ -311,6 +311,11 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
             <p role="alert" data-testid="report-error" data-status={String(state.status)}>
               {state.message}
             </p>
+            {state.status === 409 && /possibly fixed/i.test(state.message) && (
+              <p className="rs-hint" data-testid="report-fixed-hint">
+                Close this panel and approve the hazard again to confirm it is still there. Then the report is available.
+              </p>
+            )}
             {state.status !== 404 && state.status !== 409 && (
               <button type="button" data-testid="report-retry" onClick={() => setReloadKey((k) => k + 1)} disabled={refreshing}>
                 {refreshing ? "Loading..." : "Try again"}

@@ -89,6 +89,32 @@ function StatusBadge({ status, testid }) {
   );
 }
 
+// "2026-10-22T08:10:00+00:00" -> "2026-10-22 08:10 UTC" (always UTC, so the text does not depend on the browser).
+function utcText(iso) {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? "an unknown time" : `${when.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+// Shown on a possibly fixed hazard (task 19): how many later drives passed it without seeing it, when it was
+// flagged and what it was before. `prefix` is the test id prefix ("hazard" in the list, "hazard-popup" in the popup).
+function FixNote({ hazard, prefix }) {
+  if (hazard.status !== "possibly_fixed") return null;
+  const n = Number(hazard.misses) || 0;
+  return (
+    <div className="rs-fix-note" data-testid={`${prefix}-fix-note`} data-misses={n}>
+      <span data-testid={`${prefix}-fix-misses`}>
+        {n > 0 ? `Not seen on ${n} later ${n === 1 ? "drive" : "drives"}` : "Marked as possibly fixed"}
+      </span>
+      {hazard.possibly_fixed_at && (
+        <span data-testid={`${prefix}-fix-flagged-at`}> Flagged {utcText(hazard.possibly_fixed_at)}.</span>
+      )}
+      {hazard.previous_status && (
+        <span data-testid={`${prefix}-fix-previous`}> Was {statusText(hazard.previous_status)} before.</span>
+      )}
+    </div>
+  );
+}
+
 function EditedMark({ testid, was }) {
   return (
     <span className="rs-edited" data-testid={testid} title={was == null ? "Edited" : `Edited (was ${was})`}>
@@ -247,6 +273,17 @@ function ReviewControls({ hazard, ctx }) {
           )}
         </form>
       )}
+      {hazard.status === "possibly_fixed" && (
+        <div className="rs-hint" data-testid="hazard-fix-hint">
+          <p>
+            Approve, Reject or Reset answers this flag: the hazard gets that status, and it is flagged again only if more
+            later drives pass it without seeing it.
+          </p>
+          <p data-testid="hazard-fix-report-note">
+            No prefilled report while it is flagged. Approve it to confirm it is still there, then open the report.
+          </p>
+        </div>
+      )}
       {busy && (
         <span className="rs-hint" role="status" data-testid="hazard-review-saving">
           Saving...
@@ -275,6 +312,7 @@ function PopupContent({ hazard, ctx }) {
       <div data-testid="hazard-popup-status">
         Status: <StatusBadge status={hazard.status} testid="hazard-popup-status-badge" />
       </div>
+      <FixNote hazard={hazard} prefix="hazard-popup" />
       <div data-testid="hazard-popup-sightings">Sightings: {hazard.sightings}</div>
       {hazard.photo_url &&
         (photoFailed ? (
@@ -690,6 +728,7 @@ export default function HazardMap() {
                     <span data-testid="hazard-list-location">{locationText(h)}</span>
                   </span>
                 </button>
+                <FixNote hazard={h} prefix="hazard" />
                 <ReviewControls hazard={h} ctx={ctx} />
               </li>
             );
