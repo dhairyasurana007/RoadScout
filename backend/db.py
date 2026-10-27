@@ -230,6 +230,14 @@ HAZARDS_REVIEW_COLUMNS = {
     "original_hazard_class": "TEXT",
     "original_severity": "INTEGER",
 }
+# Column added to hazards by the agency report (task 18), same idempotent migration:
+#   agency_override  NULL = use the agency worked out from the hazard's position (backend/agency.py);
+#                    'VDOT', 'MDOT SHA' or 'none' (no agency) = the user's choice on the report screen.
+#                    Deduplication never touches it, and a hazard that has one counts as having review work.
+AGENCY_OVERRIDES = ("VDOT", "MDOT SHA", "none")
+HAZARDS_AGENCY_COLUMNS = {
+    "agency_override": "TEXT",
+}
 HAZARDS_INDEX = "CREATE INDEX IF NOT EXISTS idx_hazards_class ON hazards (hazard_class, lat, lon)"
 CANDIDATES_HAZARD_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_candidates_hazard ON candidates (hazard_id)"
@@ -284,6 +292,7 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(VERDICTS_INDEX)
         conn.execute(HAZARDS_SCHEMA)
         _add_missing_columns(conn, "hazards", HAZARDS_REVIEW_COLUMNS)
+        _add_missing_columns(conn, "hazards", HAZARDS_AGENCY_COLUMNS)
         conn.execute(HAZARDS_INDEX)
         conn.execute(CANDIDATES_HAZARD_INDEX)
         conn.commit()

@@ -160,3 +160,123 @@
   color: #b00020;
   font-size: 13px;
 }
+
+/* Prefilled agency report panel (task 18). */
+.rs-report-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 1.5rem 1rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+.rs-report {
+  box-sizing: border-box;
+  width: min(760px, 100%);
+  padding: 1rem 1.25rem 1.25rem;
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.rs-report:focus {
+  outline: none;
+}
+.rs-report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.rs-report-head h3 {
+  margin: 0;
+}
+.rs-report-banner {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid #1976d2;
+  background: #e3f2fd;
+  font-weight: 600;
+}
+.rs-report-agency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.rs-report-unverified {
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid #ef6c00;
+  background: #fff3e0;
+}
+.rs-report-fields {
+  margin: 0.5rem 0;
+}
+.rs-report-field {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #eee;
+}
+.rs-report-field dt {
+  font-weight: 600;
+}
+.rs-report-field dd {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rs-report-field[data-empty="true"] dd > span:first-child {
+  color: #555;
+  font-style: italic;
+}
+.rs-report-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rs-report-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+}
+.rs-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.75rem 0 0.25rem;
+}
+.rs-report-actions a {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #767676;
+  border-radius: 3px;
+  background: #efefef;
+  color: #111;
+  text-decoration: none;
+}
+.rs-report-textlabel {
+  display: block;
+  margin-top: 0.75rem;
+}
+.rs-report-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  font: 12px/1.4 monospace;
+}
+
+/* Keep long selects and button rows inside the 230 px popup (the report button made the row wrap). */
+.rs-popup {
+  white-space: normal;
+}
+.rs-popup select,
+.rs-popup .rs-edit label {
+  max-width: 100%;
+  box-sizing: border-box;
+}

@@ -427,8 +427,10 @@ test("the edit form fits inside the open popup and the map keeps the popup in vi
     .poll(async () => {
       const outer = await wrapper.boundingBox();
       const inner = await form.boundingBox();
-      return !!outer && !!inner && inner.x >= outer.x && inner.x + inner.width <= outer.x + outer.width &&
-        inner.y >= outer.y && inner.y + inner.height <= outer.y + outer.height;
+      // 1 px of slack for sub-pixel rounding; the popup is re-laid out a frame after the form opens, so poll.
+      const slack = 1;
+      return !!outer && !!inner && inner.x >= outer.x - slack && inner.x + inner.width <= outer.x + outer.width + slack &&
+        inner.y >= outer.y - slack && inner.y + inner.height <= outer.y + outer.height + slack;
     })
     .toBe(true);
   await popup(page).getByTestId("hazard-cancel").click();

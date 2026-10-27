@@ -87,8 +87,13 @@ leaves the hazard supported by the other drives alone for a while); only ``revie
 the user sets the value back to the automatic one. If the cluster's automatic class changes (a member was
 verified again as another class), the old hazard no longer matches its cluster by class.
 
+The agency chosen on the report screen (task 18, ``hazards.agency_override``: ``VDOT``, ``MDOT SHA`` or ``none``;
+NULL = automatic) is a user decision too: deduplication never writes it, so it survives every re-run, and a hazard
+that has one counts as carrying review work for the adoption rules below. ``review_hazard`` also sets
+``reported`` (only from an approved or reported hazard, else ``ReviewConflict``).
+
 Review work survives re-processing (adoption). A hazard that carries user decisions (a status other than
-``new``, or an edited class or severity) and has lost all its members (its drive was re-processed, so its
+``new``, an edited class or severity, or a chosen agency) and has lost all its members (its drive was re-processed, so its
 candidates were deleted and are being recreated) is not deleted straight away:
 
 - ``refresh_hazards_quietly`` (run when candidates are deleted) leaves such hazards in place ("parked");
@@ -121,7 +126,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .db import HAZARD_STATUSES, get_connection, init_db
+from .db import AGENCY_OVERRIDES, HAZARD_STATUSES, get_connection, init_db
 from .hazard_prompts import PromptConfigError, load_hazard_prompts
 
 logger = logging.getLogger(__name__)
@@ -136,12 +141,17 @@ _DERIVED = ("hazard_class", "lat", "lon", "direction", "severity", "confidence",
 # Review bookkeeping rewritten together with the derived values (see _apply_edits).
 _REVIEW_KEPT = ("class_edited", "severity_edited", "original_hazard_class", "original_severity")
 _WRITTEN = _DERIVED + _REVIEW_KEPT
-REVIEW_STATUSES = ("new", "approved", "rejected")  # what review_hazard / PATCH may set
+REVIEW_STATUSES = ("new", "approved", "rejected", "reported")  # what review_hazard / PATCH may set
+REPORTABLE_STATUSES = ("approved", "reported")  # "reported" can only be set from one of these (task 18)
 SEVERITIES = (1, 2, 3)
 
 
 class DedupError(RuntimeError):
     """Deduplication failed; the transaction was rolled back."""
+
+
+class ReviewConflict(ValueError):
+    """The review is well-formed but the hazard's current state does not allow it (the route answers 409)."""
 
 
 @dataclass
@@ -375,8 +385,10 @@ def _auto_class(hazard: dict[str, Any]) -> str:
 
 
 def _has_decision(hazard: dict[str, Any]) -> bool:
-    """Does the hazard carry review work (a status other than new, or an edited class or severity)?"""
-    return hazard["status"] != "new" or bool(hazard.get("class_edited")) or bool(hazard.get("severity_edited"))
+    """Does the hazard carry review work (a status other than new, an edited class or severity, or an agency
+    chosen by the user)?"""
+    return (hazard["status"] != "new" or bool(hazard.get("class_edited")) or bool(hazard.get("severity_edited"))
+            or hazard.get("agency_override") is not None)
 
 
 def _apply_edits(values: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
@@ -650,14 +662,18 @@ def review_hazard(
     status: Any = _UNSET,
     hazard_class: Any = _UNSET,
     severity: Any = _UNSET,
+    agency: Any = _UNSET,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Apply a human review to a hazard in ONE transaction and return the updated row.
 
-    At least one of ``status`` (``new``, ``approved``, ``rejected``; ``reported`` and ``possibly_fixed`` are
-    set by later tasks and refused here), ``hazard_class`` (one of the classes in the hazard prompts config)
-    and ``severity`` (an int 1 to 3; bool and float are refused) must be given. Anything else raises
-    ``ValueError`` and changes nothing; an unknown id raises ``LookupError``.
+    At least one of ``status`` (``new``, ``approved``, ``rejected`` or ``reported``; ``possibly_fixed`` is
+    set by a later task and refused here), ``hazard_class`` (one of the classes in the hazard prompts config),
+    ``severity`` (an int 1 to 3; bool and float are refused) and ``agency`` (``"VDOT"``, ``"MDOT SHA"``,
+    ``"none"`` = no agency, or ``None`` / ``"auto"`` = back to the automatic agency) must be given. Anything else
+    raises ``ValueError`` and changes nothing; an unknown id raises ``LookupError``. ``reported`` means "the user
+    says they submitted the report themselves" and is only allowed while the hazard is approved or already
+    reported, else ``ReviewConflict`` (a ``ValueError``); it leaves ``reviewed_at`` alone.
 
     Bookkeeping: ``updated_at`` always changes; ``reviewed_at`` is set when the status becomes approved or
     rejected and cleared when it becomes new. A class or severity that differs from the automatic one sets
@@ -666,12 +682,15 @@ def review_hazard(
     Deduplication keeps edited values (see the module docstring)."""
     if isinstance(hazard_id, bool) or not isinstance(hazard_id, int):
         raise ValueError(f"hazard id must be an integer, got {hazard_id!r}")
-    if status is _UNSET and hazard_class is _UNSET and severity is _UNSET:
-        raise ValueError("nothing to change: give status, hazard_class and/or severity")
+    if status is _UNSET and hazard_class is _UNSET and severity is _UNSET and agency is _UNSET:
+        raise ValueError("nothing to change: give status, hazard_class, severity and/or agency")
     if status is not _UNSET and (not isinstance(status, str) or status not in REVIEW_STATUSES):
         raise ValueError(
-            f"status must be one of {', '.join(REVIEW_STATUSES)} (reported and possibly_fixed cannot be set "
+            f"status must be one of {', '.join(REVIEW_STATUSES)} (possibly_fixed cannot be set "
             f"by a review); got {status!r}")
+    if agency is not _UNSET and agency is not None and (not isinstance(agency, str) or (
+            agency != "auto" and agency not in AGENCY_OVERRIDES)):
+        raise ValueError(f"agency must be one of {', '.join(AGENCY_OVERRIDES)}, auto or null; got {agency!r}")
     if severity is not _UNSET and (
         isinstance(severity, bool) or not isinstance(severity, int) or severity not in SEVERITIES
     ):
@@ -695,8 +714,14 @@ def review_hazard(
                 raise LookupError(f"hazard not found: {hazard_id}")
             sets: dict[str, Any] = {"updated_at": now}
             if status is not _UNSET:
+                if status == "reported" and row["status"] not in REPORTABLE_STATUSES:
+                    raise ReviewConflict(
+                        f"only an approved hazard can be marked as reported; this one is {row['status']}")
                 sets["status"] = status
-                sets["reviewed_at"] = now if status in ("approved", "rejected") else None
+                if status != "reported":  # reporting an approved hazard keeps the time it was approved
+                    sets["reviewed_at"] = now if status in ("approved", "rejected") else None
+            if agency is not _UNSET:
+                sets["agency_override"] = None if agency in (None, "auto") else agency
             for value, field, flag, orig in (
                 (hazard_class, "hazard_class", "class_edited", "original_hazard_class"),
                 (severity, "severity", "severity_edited", "original_severity"),

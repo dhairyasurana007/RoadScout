@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./HazardMap.css";
+import ReportPanel from "./ReportPanel.jsx";
 
 // Northern Virginia / Maryland commute area, shown when there is nothing to fit.
 export const DEFAULT_CENTER = [38.9, -77.2];
@@ -171,6 +172,18 @@ function ReviewControls({ hazard, ctx }) {
         >
           Reset
         </button>
+        {(hazard.status === "approved" || hazard.status === "reported") && (
+          <button
+            type="button"
+            data-testid="hazard-report-open"
+            data-hazard-id={id}
+            aria-label={`Prefilled report for hazard ${id}`}
+            disabled={busy}
+            onClick={(e) => ctx.openReport(id, e.currentTarget)}
+          >
+            Prefilled report
+          </button>
+        )}
         {!editing && (
           <button
             type="button"
@@ -309,6 +322,8 @@ export default function HazardMap() {
   const [errors, setErrors] = useState({}); // hazard id -> last review error
   const [notice, setNotice] = useState(""); // page-level message that outlives a hazard (e.g. it was removed)
   const [hostVersion, setHostVersion] = useState(0); // bumped when popup hosts are added or removed
+  const [reportId, setReportId] = useState(null); // hazard whose prefilled report panel is open (task 18)
+  const reportOpener = useRef(null); // the button that opened it, to give focus back on close
 
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -518,7 +533,7 @@ export default function HazardMap() {
   // Send one review (PATCH) for one hazard. Resolves { ok } and never throws. One request per hazard at a time;
   // other hazards stay usable. On any failure the hazard on screen is left as it was.
   const submit = useCallback(
-    async (id, body) => {
+    async (id, body, opts = {}) => {
       if (reviewStore.inFlight.has(id)) return { ok: false, skipped: true };
       reviewStore.start(id);
       clearError(id);
@@ -543,7 +558,8 @@ export default function HazardMap() {
           outcome = { ok: true };
         } else {
           const message = await errorMessage(response, "Could not save the review");
-          setErrors((e) => ({ ...e, [id]: message }));
+          outcome = { ok: false, message, status: response.status };
+          if (!opts.quiet) setErrors((e) => ({ ...e, [id]: message }));
           if (response.status === 404) {
             // The hazard is gone (deleted by a re-run, say): reload so the list matches the server.
             setNotice(`Hazard ${id} was not found, so the list was refreshed.`);
@@ -552,7 +568,8 @@ export default function HazardMap() {
         }
       } catch (err) {
         const message = err?.message === "unexpected response" ? "Unexpected response from the server." : "Could not reach the server.";
-        setErrors((e) => ({ ...e, [id]: message }));
+        outcome = { ok: false, message };
+        if (!opts.quiet) setErrors((e) => ({ ...e, [id]: message }));
       } finally {
         reviewStore.finish(id);
       }
@@ -560,7 +577,28 @@ export default function HazardMap() {
     },
     [clearError],
   );
-  const ctx = { pending, errors, submit, clearError };
+  const openReport = useCallback((id, opener) => {
+    reportOpener.current = opener;
+    setReportId(id);
+  }, []);
+  const closeReport = useCallback(() => setReportId(null), []);
+  // Closing the report panel gives focus back to the button that opened it (or, if that button is gone, to the
+  // same hazard's report button in the list).
+  const reportWasOpen = useRef(null);
+  useEffect(() => {
+    if (reportId !== null) {
+      reportWasOpen.current = reportId;
+      return;
+    }
+    const id = reportWasOpen.current;
+    reportWasOpen.current = null;
+    if (id === null) return;
+    const opener = reportOpener.current;
+    reportOpener.current = null;
+    if (opener?.isConnected) opener.focus();
+    else document.querySelector(`[data-testid="hazard-list-item"][data-hazard-id="${id}"] [data-testid="hazard-report-open"]`)?.focus();
+  }, [reportId]);
+  const ctx = { pending, errors, submit, clearError, openReport };
 
   selectedIdRef.current = selection.id;
   const loading = data.state === "loading";
@@ -658,6 +696,7 @@ export default function HazardMap() {
           })}
         </ul>
       </div>
+      {reportId !== null && <ReportPanel hazardId={reportId} ctx={ctx} onClose={closeReport} />}
       {[...hosts.current].map(([id, host]) =>
         itemsById.has(id) ? createPortal(<PopupContent hazard={itemsById.get(id)} ctx={ctx} />, host.el, String(id)) : null,
       )}
