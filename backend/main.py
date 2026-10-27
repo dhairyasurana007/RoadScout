@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.db import init_db
 from backend.drives import router as drives_router
 from backend.pipeline import recover_interrupted
+from backend.results import router as results_router
 
 
 @asynccontextmanager
@@ -27,6 +28,7 @@ app.add_middleware(
 
 
 app.include_router(drives_router)
+app.include_router(results_router)
 
 
 @app.get("/health")

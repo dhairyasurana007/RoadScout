@@ -191,6 +191,17 @@ API: `POST /api/drives/{id}/process` (no body) starts the job in the background 
 - **Files** live under `data/storage/<drive id>/`: the upload (never modified or deleted), `work/` (chunks and `frame_timestamps.json`, kept after the run) and `candidates/` (best-frame and crop JPEGs).
 - The provider is `get_provider()` at run time (fake unless `ROADSCOUT_PROVIDER` says otherwise), one instance for detection and verification. fps, chunk length and height come from the `ROADSCOUT_PREPROCESS_*` / `ROADSCOUT_CHUNK_SECONDS` settings. If the server stops mid-run, the drive is marked `failed` ("interrupted") at the next start. Run a single server process.
 
+## Results page (local only)
+
+The upload page doubles as the results page (`backend/results.py`, `frontend/src/App.jsx`). After an upload (or after typing a drive ID under "Open an existing drive") it shows the drive status and a **Start processing** button (`POST /api/drives/{id}/process`; disabled while the drive is processing). While the drive is `processing` the page polls `GET /api/drives/{id}` every 1.5 s (add `?pollMs=50` to the page URL to shorten it, minimum 10) and shows the stage; a `failed` drive shows the stage and error text. When the drive is `done` it lists the verified hazards, each with photo, class, severity (1 Low, 2 Medium, 3 High), confidence and location (5 decimals, or "no location"), or "No verified hazards".
+
+**The photos are unblurred (faces and license plates visible) until the privacy blur (task 15), so this page and these routes are for your own machine only.** The page says so, and the hosted demo (task 23) must not serve them.
+
+API (read-only):
+
+- `GET /api/drives/{id}/hazards` returns `200` with a JSON list of the drive's accepted hazards (verdict `accepted` and `is_hazard`), in drive-time order, or `[]`. `404` for an unknown drive. Each item has `candidate_id` (also as `id`), `drive_id`, `hazard_class` (the verdict's class), `detector_class`, `severity` (1 to 3), `confidence` (0 to 1), `lane`, `reason`, `report_description`, `lat`, `lon`, `heading` (all `null` unless `geotag_status` is `ok`; the hazard is still listed), `geotag_status`, `best_timestamp`, `first_timestamp`, `last_timestamp`, `frames_seen`, `photo_url` and `crop_url` (`null` when there is no crop). No file paths are returned.
+- `GET /api/drives/{id}/hazards/{candidate_id}/photo` serves the best-frame JPEG (`image/jpeg`, `Cache-Control: no-store`); add `?variant=crop` for the crop. `404` for an unknown drive or candidate, a candidate of another drive, a rejected or non-hazard candidate, a missing file, or a stored path outside `data/storage/<drive id>/candidates/`. A non-integer candidate id is `422`.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -217,7 +228,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`), results routes (`results.py`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
