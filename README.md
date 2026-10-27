@@ -153,6 +153,27 @@ rows = load_candidates("drive-1")
 - **Table `candidates`**: `id`, `drive_id`, `hazard_id` (NULL until dedup), `hazard_class`, `track_key`, `track_id`, `chunk`, `first_timestamp`, `last_timestamp`, `frames_seen`, `max_mask_area`, `best_frame_index`, `best_timestamp`, `best_box`, `best_frame_path`, `crop_path`, `lat`, `lon`, `heading`, `score`, `geotag_status`, `geotag_note`.
 - **Idempotent and all-or-nothing**: re-running replaces the drive's candidates in one transaction (and removes their old images). A missing chunk video raises `CandidateError` and leaves the old candidates alone. No detections means zero candidates, not an error. It uses OpenCV (`opencv-python-headless`) to decode frames and measure sharpness; there are no network calls.
 
+## Muse Spark verification
+
+`backend/verification.py` asks Muse Spark (through the provider interface, so the fake provider unless `ROADSCOUT_PROVIDER` says otherwise) whether each candidate is a real hazard, and stores one structured verdict per candidate in the `verdicts` table:
+
+```python
+from backend.verification import verify_drive, load_verdicts, load_accepted_candidates
+
+summary = verify_drive("drive-1", chunks=result)         # chunks only needed for the neighbouring frames
+rows = load_verdicts("drive-1")                           # every verdict, rejected ones too (accepted_only=True to filter)
+hazards = load_accepted_candidates("drive-1")             # accepted candidates, each with a "verdict" dict
+```
+
+`verify_drive(drive_id, *, chunks=None, provider=None, min_confidence=None, db_path=None, prompt=None, prompts=None)`:
+
+- **Images per candidate** (in this order): the best frame, the crop (left out if there is none), and the frames just before and after the best frame cut from the chunk video (needs `chunks`; a neighbour that does not exist is skipped). Unblurred frames are sent to Muse Spark here; this is the one place they leave your machine.
+- **Prompt**: `config/verification_prompt.json` (override the path with `ROADSCOUT_VERIFY_PROMPT`) holds `{"version", "prompt", "schema"}`. The `prompt` may use `{detector_class}`, `{classes}` and `{schema}` placeholders. It is passed to the provider as `verify(images, class_prompt=<detector class>, prompt_version=<version>, prompt_text=<prompt>)`. The wording and request shape are placeholders until task 26. Change `version` whenever the prompt changes: it is stored on every verdict.
+- **Verdict**: `is_hazard`, `class`, `severity` (1 to 3, 0 only for a non-hazard), `lane`, `confidence` (0 to 1), `reason`, `report_description`. A malformed answer (not a verdict, bad severity or confidence, a class not in `config/hazard_prompts.json`) raises `VerificationError` naming the candidate id.
+- **Accepted** means `is_hazard and confidence >= min_confidence` (default 0.5; set `ROADSCOUT_VERIFY_MIN_CONFIDENCE` or pass `min_confidence`). Rejected verdicts are stored too, for the eval ablation.
+- **Table `verdicts`**: `candidate_id` (primary key, deleted with its candidate), `drive_id`, `is_hazard`, `hazard_class`, `severity`, `lane`, `confidence`, `reason`, `report_description`, `model`, `prompt_version`, `accepted`, `created_at`.
+- **Idempotent and all-or-nothing**: re-running replaces the drive's verdicts in one transaction. If the provider fails or answers badly for any candidate, `VerificationError` (`candidate_id`, original error as `__cause__`) is raised and nothing is written. A drive with no candidates is a no-op.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -179,7 +200,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`)
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`)
 - `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)

@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "prompt": "You are checking a road hazard that an object detector found in dashcam footage. The images are, in order: the best full frame, a crop of the detected region, then up to two neighbouring frames from the same moment. The detector believes this is: {detector_class}. Decide whether it is a real road hazard that a driver should report to the highway agency. Shadows, tar seams, repaired patches, stains and ordinary road paint are not hazards. Answer with one JSON object and nothing else, matching this schema: {schema}. Use one of these classes for a real hazard: {classes}. severity is 1 (minor), 2 (moderate) or 3 (severe); use 0 only when is_hazard is false. lane is where the hazard is relative to the camera's lane, for example left, center, right or shoulder, or null if unclear. confidence is your confidence from 0 to 1 that it is a real hazard. reason is one short line. report_description is one or two plain sentences for the agency report.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "is_hazard": {"type": "boolean"},
+      "class": {"type": "string"},
+      "severity": {"type": "integer", "minimum": 0, "maximum": 3},
+      "lane": {"type": ["string", "null"]},
+      "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+      "reason": {"type": "string"},
+      "report_description": {"type": "string"}
+    },
+    "required": ["is_hazard", "class", "severity", "lane", "confidence", "reason", "report_description"]
+  }
+}

@@ -90,6 +90,33 @@ def min_track_frames() -> int:
     return int(value)
 
 
+# --- Verification settings (task 9) -----------------------------------------
+
+DEFAULT_VERIFY_MIN_CONFIDENCE = 0.5
+
+
+def verification_prompt_path() -> Path:
+    """JSON file holding the versioned Muse Spark verification prompt.
+    Set ROADSCOUT_VERIFY_PROMPT (default: config/verification_prompt.json)."""
+    raw = (os.environ.get("ROADSCOUT_VERIFY_PROMPT") or "").strip()
+    return Path(raw) if raw else ROOT / "config" / "verification_prompt.json"
+
+
+def verify_min_confidence() -> float:
+    """Minimum confidence for a verdict to be accepted (inclusive). Set ROADSCOUT_VERIFY_MIN_CONFIDENCE
+    to a number from 0 to 1 (default 0.5)."""
+    raw = os.environ.get("ROADSCOUT_VERIFY_MIN_CONFIDENCE")
+    if raw is None or not raw.strip():
+        return DEFAULT_VERIFY_MIN_CONFIDENCE
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"ROADSCOUT_VERIFY_MIN_CONFIDENCE must be a number from 0 to 1, got {raw!r}") from None
+    if not 0.0 <= value <= 1.0:  # also rejects NaN
+        raise ValueError(f"ROADSCOUT_VERIFY_MIN_CONFIDENCE must be a number from 0 to 1, got {raw!r}")
+    return value
+
+
 # --- Model provider settings (task 3) ---------------------------------------
 
 DEFAULT_SPEND_CAP_USD = 20.0

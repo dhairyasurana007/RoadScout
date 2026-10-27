@@ -91,6 +91,32 @@ CANDIDATES_INDEX = (
 )
 
 
+# One Muse Spark verdict per candidate (task 9, written by backend/verification.py). The row is
+# deleted with its candidate (re-running aggregation drops the drive's old verdicts). hazard_class
+# is the class the model gave (a known class when is_hazard is 1; anything for a non-hazard);
+# severity is 1 to 3 for a hazard (0 allowed only when not a hazard). model and prompt_version
+# say which model and which verification prompt produced the verdict. accepted is 1 when
+# is_hazard and confidence >= the threshold used; rejected verdicts are kept for the eval ablation.
+VERDICTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS verdicts (
+    candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+    drive_id TEXT NOT NULL,
+    is_hazard INTEGER NOT NULL,
+    hazard_class TEXT NOT NULL,
+    severity INTEGER NOT NULL,
+    lane TEXT,
+    confidence REAL NOT NULL,
+    reason TEXT NOT NULL,
+    report_description TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    accepted INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+)
+"""
+VERDICTS_INDEX = "CREATE INDEX IF NOT EXISTS idx_verdicts_drive ON verdicts (drive_id)"
+
+
 def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection (rows behave like dicts, foreign keys on)."""
     conn = sqlite3.connect(str(path if path is not None else db_path()))
@@ -116,6 +142,8 @@ def init_db(path: Path | str | None = None) -> Path:
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)
         conn.execute(CANDIDATES_INDEX)
+        conn.execute(VERDICTS_SCHEMA)
+        conn.execute(VERDICTS_INDEX)
         conn.commit()
     finally:
         conn.close()

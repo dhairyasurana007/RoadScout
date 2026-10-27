@@ -95,7 +95,11 @@ class LiveProvider(ModelProvider):
         raise NotImplementedError("live SAM 3.1 detection is a placeholder until task 26")
 
     def _do_verify(
-        self, images: Sequence[Image], class_prompt: str | None, prompt_version: str | None
+        self,
+        images: Sequence[Image],
+        class_prompt: str | None,
+        prompt_version: str | None,
+        prompt_text: str | None = None,
     ) -> Verdict:
         raise NotImplementedError("live Muse Spark verification is a placeholder until task 26")
 
@@ -108,5 +112,11 @@ class LiveProvider(ModelProvider):
         *,
         class_prompt: str | None = None,
         prompt_version: str | None = None,
+        prompt_text: str | None = None,
     ) -> Verdict:
-        return self._call("verify", lambda: self._do_verify(images, class_prompt, prompt_version))
+        if prompt_text is None:  # keep the 3-argument form for subclasses that override _do_verify
+            return self._call("verify", lambda: self._do_verify(images, class_prompt, prompt_version))
+        return self._call(
+            "verify",
+            lambda: self._do_verify(images, class_prompt, prompt_version, prompt_text=prompt_text),
+        )

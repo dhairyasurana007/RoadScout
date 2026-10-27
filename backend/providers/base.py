@@ -33,10 +33,14 @@ class ModelProvider(ABC):
         *,
         class_prompt: str | None = None,
         prompt_version: str | None = None,
+        prompt_text: str | None = None,
     ) -> Verdict:
         """Muse Spark: judge one candidate from its images (best frame first, then the
         crop and neighbouring frames) and return a structured verdict. ``class_prompt``
-        is the detector's class for the candidate."""
+        is the detector's class for the candidate. ``prompt_version`` is the version label of
+        the verification prompt (stored on the verdict) and ``prompt_text`` the prompt itself
+        (``config/verification_prompt.json``, task 9); both are optional, so older callers and
+        providers that ignore them keep working."""
 
     def estimate_cost(self, operation: str) -> float:
         """Estimated USD cost of one call (``"detect"`` or ``"verify"``), used for the

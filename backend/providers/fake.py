@@ -66,6 +66,7 @@ class FakeProvider(ModelProvider):
         *,
         class_prompt: str | None = None,
         prompt_version: str | None = None,
+        prompt_text: str | None = None,
     ) -> Verdict:
         hazard_class = class_prompt or "pothole"
         version = prompt_version or FAKE_PROMPT_VERSION

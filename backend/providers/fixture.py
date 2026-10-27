@@ -63,6 +63,7 @@ class FixtureProvider(ModelProvider):
         *,
         class_prompt: str | None = None,
         prompt_version: str | None = None,
+        prompt_text: str | None = None,
     ) -> Verdict:
         data = self._load("verify.json")
         try:
