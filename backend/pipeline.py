@@ -24,6 +24,13 @@ Drive status and stage (columns of the ``drives`` table, also keys of the drive 
     updated_at    UTC ISO time of the last status or stage change
     finished_at   UTC ISO time the last run ended; NULL while running
 
+Stationary stretches (task 13): the detecting stage drops frames whose GPS speed is below
+ROADSCOUT_STATIONARY_SPEED_MPS (default 0.5 m/s; ``stationary_speed_mps=``), unless switched off with
+ROADSCOUT_SKIP_STATIONARY=0 / ``skip_stationary=False`` (see ``backend/detection.py``; it fails open
+when the GPX is missing or unusable). The counts are on the drive row (integers, 0 until detection
+finishes and reset to 0 at the start of a run, so a re-run never accumulates): ``frames_total``, ``stationary_frames_skipped``, ``stationary_chunks_skipped``,
+``chunks_sent`` and ``stationary_note``. The full summary is ``PipelineResult.detection``.
+
 The status and stage are written and committed BEFORE each stage starts, so ``GET /api/drives/{id}``
 shows progress while the job runs. Claiming a drive (status processing, stage queued) is one atomic
 UPDATE, so two concurrent requests cannot both start it (the loser gets ``DriveBusyError`` / HTTP 409).
@@ -275,6 +282,8 @@ def run_pipeline(
     min_frames: int | None = None,
     min_confidence: float | None = None,
     claimed: bool = False,
+    skip_stationary: bool | None = None,
+    stationary_speed_mps: float | None = None,
 ) -> PipelineResult:
     """Run the four stages for one drive and record progress, errors and the outcome in the
     ``drives`` row. See the module docstring.
@@ -284,6 +293,8 @@ def run_pipeline(
     ``fps``, ``chunk_seconds``, ``height``, ``min_frames`` and ``min_confidence`` are passed to the
     stages (None means their config defaults). ``claimed=True`` means the caller already did
     ``claim_drive`` (the API route does); otherwise this function claims the drive itself.
+    ``skip_stationary`` / ``stationary_speed_mps`` switch and tune the stationary-frame filter of the
+    detecting stage (task 13; None means ROADSCOUT_SKIP_STATIONARY / ROADSCOUT_STATIONARY_SPEED_MPS).
     """
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
@@ -309,6 +320,8 @@ def run_pipeline(
 
         # Start from a clean slate so a failure never leaves stale rows from an older run.
         clear_results(drive_id, db_path=db, work_dir=work if default_work else None)
+        _update(db, drive_id, frames_total=0, stationary_frames_skipped=0, stationary_chunks_skipped=0,
+                chunks_sent=0, stationary_note=None)
 
         stage = STAGE_PREPROCESSING
         _update(db, drive_id, status=STATUS_PROCESSING, stage=stage)
@@ -323,7 +336,13 @@ def run_pipeline(
         _update(db, drive_id, stage=stage)
         if provider is None:
             provider = get_provider()
-        result.detection = run_detection(drive_id, result.preprocess, provider=provider, db_path=db)
+        result.detection = run_detection(
+            drive_id, result.preprocess, provider=provider, db_path=db,
+            skip_stationary=skip_stationary, stationary_speed_mps=stationary_speed_mps,
+            gpx_track=drive,  # the drive record: GPX path, started_at and clock offset (fails open)
+            storage=storage,
+        )
+        _record_stationary_counts(db, drive_id, result.detection)
 
         stage = STAGE_AGGREGATING
         _update(db, drive_id, stage=stage)
@@ -368,6 +387,13 @@ def run_pipeline(
     logger.info("pipeline done for drive %s: %d candidates, %d accepted", drive_id,
                 result.verification.candidate_count, result.verification.accepted_count)
     return result
+
+
+def _record_stationary_counts(db: Path, drive_id: str, detection: DetectionSummary) -> None:
+    """Write the stationary-filter counts of this run onto the drive row (shown by GET /api/drives/{id})."""
+    _update(db, drive_id, frames_total=detection.frames_total,
+            stationary_frames_skipped=detection.stationary_frames_skipped, stationary_chunks_skipped=detection.stationary_chunks_skipped,
+            chunks_sent=detection.chunks_sent, stationary_note=detection.stationary_note)
 
 
 def _record_failure(db: Path, drive_id: str, stage: str, message: str) -> None:

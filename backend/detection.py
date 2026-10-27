@@ -33,6 +33,27 @@ Mapping to the ``detections`` table (one row per ``Detection``; columns in ``bac
 - ``box`` is JSON ``[x1, y1, x2, y2]`` in chunk pixels; ``mask`` is the RLE dict as JSON text
   (NULL if the provider gave none); ``score`` is the provider's score.
 
+Skipping stationary stretches (task 13, ``backend/stationary.py``). Extra optional parameters:
+``skip_stationary`` (default ``config.skip_stationary_enabled()``, env ROADSCOUT_SKIP_STATIONARY,
+on), ``stationary_speed_mps`` (default env ROADSCOUT_STATIONARY_SPEED_MPS, 0.5), ``gpx_track`` (a
+``GpxTrack``, a drive record, or None to read the drive's row from the ``drives`` table of
+``db_path``), ``video_start``, ``clock_offset_seconds`` (override the track's own) and ``storage``
+(to find the GPX file; default ``get_storage()``). The speed of each sampled frame is the GPX speed at
+its global timestamp (GPX time = started_at + clock_offset_seconds + timestamp). A frame is
+stationary when its speed is below the threshold (exactly at the threshold counts as moving).
+
+- A chunk whose frames are ALL stationary is not sent to the provider at all (no ``detect`` call, no
+  cost). It writes no rows, appears in ``detections_per_chunk`` with 0 and in ``skipped_chunks``.
+- A chunk with SOME stationary frames is still sent once, unchanged (chunks are never re-encoded),
+  and any detection the provider reports on a stationary frame is dropped before storing
+  (``stationary_detections_dropped`` counts them). Moving frames keep their global ``frame_index``
+  and ``frame_timestamp``, so aggregation, geotagging and verification work as before.
+- Fail open: no GPX, an unreadable/unparseable GPX, no frame timestamps, or a frame outside the GPX
+  range means "moving": those frames are never dropped and the run still succeeds
+  (``stationary_note`` says why). Disabled (``skip_stationary=False``) behaves exactly as before.
+- The summary carries ``frames_total``, ``stationary_frames_skipped``, ``chunks_total``, ``chunks_sent``,
+  ``stationary_chunks_skipped``. ``chunk_count`` is the number of chunks sent to the provider.
+
 Rules:
 
 - An empty result for a chunk is success and adds no rows. No chunks at all is also success.
@@ -54,9 +75,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+from . import config
 from .db import get_connection, init_db
 from .hazard_prompts import HazardPrompts, load_hazard_prompts
 from .providers import ModelProvider, ProviderError, get_provider
+from .stationary import find_stationary_frames, resolve_track, validate_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +104,22 @@ class DetectionSummary:
     """What a ``run_detection`` call stored."""
 
     drive_id: str
-    chunk_count: int  # chunks sent to the provider
+    chunk_count: int  # chunks sent to the provider (same as chunks_sent)
     frame_count: int  # frame records the provider returned
     detection_count: int  # rows written
     track_count: int  # distinct track_key values
     prompts: list[str] = field(default_factory=list)  # the prompt texts sent to every chunk
-    detections_per_chunk: dict[int, int] = field(default_factory=dict)  # chunk index -> rows
+    detections_per_chunk: dict[int, int] = field(default_factory=dict)  # chunk index -> rows (all chunks)
+    # Stationary-stretch counts (task 13). With the filter off or no usable GPX: stationary_frames_skipped
+    # and stationary_chunks_skipped are 0 and chunks_sent == chunks_total.
+    frames_total: int = 0  # sampled frames in all chunks
+    stationary_frames_skipped: int = 0  # of those, frames below the speed threshold
+    chunks_total: int = 0  # all chunks of the drive
+    chunks_sent: int = 0  # chunks sent to the provider
+    stationary_chunks_skipped: int = 0  # chunks not sent because every frame was stationary
+    skipped_chunks: list[int] = field(default_factory=list)  # their chunk indexes
+    stationary_detections_dropped: int = 0  # detections dropped on stationary frames of sent chunks
+    stationary_note: str | None = None  # why the filter was off or the GPS not (fully) usable
 
 
 @dataclass
@@ -96,11 +129,20 @@ class _ChunkInfo:
     start_frame: int
     frame_count: int
     start_time: float
+    end_time: float | None = None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _info_from_chunk(c: Any) -> _ChunkInfo:
     try:
-        return _ChunkInfo(int(c.index), str(c.path), int(c.start_frame), int(c.frame_count), float(c.start_time))
+        return _ChunkInfo(int(c.index), str(c.path), int(c.start_frame), int(c.frame_count),
+                          float(c.start_time), _optional_float(getattr(c, "end_time", None)))
     except (AttributeError, TypeError, ValueError):
         raise TypeError(
             "chunks must be a PreprocessResult, a frame_timestamps.json path, or a sequence of "
@@ -116,7 +158,7 @@ def _read_record(path: Path) -> tuple[list[_ChunkInfo], dict[int, float]]:
         base = path.parent
         infos = [
             _ChunkInfo(int(c["index"]), str(base / c["file"]), int(c["start_frame"]),
-                       int(c["frame_count"]), float(c["start_time"]))
+                       int(c["frame_count"]), float(c["start_time"]), _optional_float(c.get("end_time")))
             for c in doc["chunks"]
         ]
         stamps = {int(f["index"]): float(f["timestamp"]) for f in doc["frames"]}
@@ -176,23 +218,71 @@ def run_detection(
     provider: ModelProvider | None = None,
     db_path: str | Path | None = None,
     prompts: HazardPrompts | None = None,
+    skip_stationary: bool | None = None,
+    stationary_speed_mps: float | None = None,
+    gpx_track: Any = None,
+    video_start: Any = None,
+    clock_offset_seconds: float | None = None,
+    storage: Any = None,
 ) -> DetectionSummary:
-    """Detect hazards in every chunk and store the raw output. See the module docstring."""
+    """Detect hazards in every chunk and store the raw output. See the module docstring.
+
+    Stationary frames (GPS speed below ``stationary_speed_mps``) are skipped: a chunk with only
+    stationary frames is not sent to the provider; a chunk with some is sent once, unchanged, and the
+    detections on its stationary frames are dropped before storing. Anything unknown about the GPS
+    counts as moving.
+    """
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
     drive_id = str(drive_id).strip()
+    if skip_stationary is not None and not isinstance(skip_stationary, bool):
+        raise TypeError(f"skip_stationary must be True, False or None, got {skip_stationary!r}")
+    skip_enabled = config.skip_stationary_enabled() if skip_stationary is None else skip_stationary
+    if stationary_speed_mps is not None:
+        threshold = validate_threshold(stationary_speed_mps)  # bad values fail even when the filter is off
+    else:
+        threshold = validate_threshold(config.stationary_speed_mps()) if skip_enabled else 0.0
     infos, stamps = _normalise_chunks(chunks)
     prompts = prompts if prompts is not None else load_hazard_prompts()
     sent = prompts.default_prompts()
     provider = provider if provider is not None else get_provider()
 
+    stationary: set[int] = set()
+    note: str | None = None
+    if not skip_enabled:
+        note = "stationary filter is off"
+    else:
+        frame_times = _frame_times(infos, stamps)
+        if not frame_times:
+            note = "no frame timestamps, so no frame was treated as stationary"
+        else:
+            track, note = resolve_track(gpx_track, drive_id, init_db(db_path), storage)
+            if track is not None:
+                analysis = find_stationary_frames(
+                    frame_times, track, threshold_mps=threshold,
+                    video_start=video_start, clock_offset_seconds=clock_offset_seconds,
+                )
+                stationary, note = analysis.frames, analysis.note
+        if note:
+            logger.info("stationary filter for drive %s: %s", drive_id, note)
+
     all_rows: list[tuple] = []
     per_chunk: dict[int, int] = {}
+    skipped: list[int] = []
+    dropped = 0
     frame_total = 0
     for info in infos:
+        if _all_stationary(info, stationary):
+            per_chunk[info.index] = 0
+            skipped.append(info.index)
+            continue
         try:
             result = provider.detect(info.path, sent)
             rows, n_frames = _map_chunk(drive_id, info, result, stamps, prompts)
+            if stationary:
+                kept = [r for r in rows if not (r[3] < info.frame_count and r[2] in stationary)]
+                dropped += len(rows) - len(kept)
+                rows = kept
         except Exception as e:
             raise DetectionError(
                 f"detection failed for chunk {info.index} ({Path(info.path).name}) of drive "
@@ -214,16 +304,53 @@ def run_detection(
 
     summary = DetectionSummary(
         drive_id=drive_id,
-        chunk_count=len(infos),
+        chunk_count=len(infos) - len(skipped),
         frame_count=frame_total,
         detection_count=len(all_rows),
         track_count=len({r[8] for r in all_rows}),
         prompts=list(sent),
         detections_per_chunk=per_chunk,
+        frames_total=sum(i.frame_count for i in infos),
+        stationary_frames_skipped=len(stationary),
+        chunks_total=len(infos),
+        chunks_sent=len(infos) - len(skipped),
+        stationary_chunks_skipped=len(skipped),
+        skipped_chunks=skipped,
+        stationary_detections_dropped=dropped,
+        stationary_note=note,
     )
-    logger.info("detection for drive %s: %d chunks, %d detections, %d tracks",
-                drive_id, summary.chunk_count, summary.detection_count, summary.track_count)
+    logger.info("detection for drive %s: %d/%d chunks sent, %d/%d frames stationary, %d detections, %d tracks",
+                drive_id, summary.chunks_sent, summary.chunks_total, summary.stationary_frames_skipped,
+                summary.frames_total, summary.detection_count, summary.track_count)
     return summary
+
+
+def _frame_times(infos: list[_ChunkInfo], stamps: dict[int, float]) -> dict[int, float]:
+    """Global frame index -> seconds from the video start, for every frame we can time.
+
+    From ``frame_timestamps.json`` when present; otherwise spread evenly from the chunk's
+    ``start_time`` to its ``end_time`` when the chunk objects carry one; else the frame is left out
+    (and so is never treated as stationary).
+    """
+    out: dict[int, float] = {}
+    for info in infos:
+        step = None
+        if info.end_time is not None and info.frame_count > 0 and info.end_time > info.start_time:
+            step = (info.end_time - info.start_time) / info.frame_count
+        for k in range(info.frame_count):
+            g = info.start_frame + k
+            if g in stamps:
+                out[g] = stamps[g]
+            elif step is not None:
+                out[g] = info.start_time + k * step
+    return out
+
+
+def _all_stationary(info: _ChunkInfo, stationary: set[int]) -> bool:
+    """True when the chunk has frames and every one of them is stationary."""
+    if not stationary or info.frame_count <= 0:
+        return False
+    return all(info.start_frame + k in stationary for k in range(info.frame_count))
 
 
 def load_detections(drive_id: str, *, db_path: str | Path | None = None) -> list[dict[str, Any]]:

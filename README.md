@@ -132,6 +132,16 @@ rows = load_detections("drive-1")                # dicts; box is a list, mask a 
 - **Empty results** are success and add no rows.
 - **Idempotent and all-or-nothing**: a run gathers every chunk's detections first, then replaces the drive's old rows in a single transaction. If the provider fails on any chunk (after its own retries), `DetectionError` (a `ProviderError`; `chunk_index`, `chunk_path`, original error as `__cause__`) is raised, nothing is written and the drive's earlier detections stay as they were.
 
+### Skipping stationary stretches
+
+To save cost, detection drops frames recorded while the car was not moving (red lights, traffic jams). `backend/stationary.py` computes the GPS speed (`GpxTrack.position_at`) at each sampled frame's global timestamp, using the drive's `started_at` and `clock_offset_seconds`; a frame is stationary when its speed is **below** the threshold (a speed exactly at the threshold counts as moving).
+
+- **Settings**: `ROADSCOUT_SKIP_STATIONARY` (`0`/`false`/`off`/`no` turn it off, anything else leaves it on) and `ROADSCOUT_STATIONARY_SPEED_MPS` (default `0.5`; a garbage value falls back to the default). `flag_stationary_frames(timestamps, gpx_track, ...)` in `backend/stationary.py` returns one bool per timestamp. `run_detection(..., skip_stationary=None, stationary_speed_mps=None, gpx_track=None, video_start=None, clock_offset_seconds=None, storage=None)` and `run_pipeline(..., skip_stationary=None, stationary_speed_mps=None)` override them; `gpx_track` is a `GpxTrack` or a drive record (default: the drive's row in the database).
+- **Whole chunk stationary**: the chunk is not sent to the provider at all (no call, no cost). It adds no rows and is listed in `DetectionSummary.skipped_chunks`.
+- **Partly stationary chunk**: the chunk is still sent once, unchanged (chunks are never re-encoded), and detections the provider reports on its stationary frames are dropped before they are stored. Frame indices and timestamps stay global, so candidates, geotagging and verification work as before.
+- **Fails open**: no GPX, an unreadable GPX, or a frame outside the GPX time range counts as moving and is never dropped; the run still succeeds and `stationary_note` says why. A drive that is stationary throughout produces zero detections and ends `done`.
+- **Counts**: `DetectionSummary` has `frames_total`, `stationary_frames_skipped`, `chunks_total`, `chunks_sent`, `stationary_chunks_skipped`, `skipped_chunks`, `stationary_detections_dropped` and `stationary_note`. The pipeline also stores `frames_total`, `stationary_frames_skipped`, `stationary_chunks_skipped`, `chunks_sent` and `stationary_note` on the `drives` row (integer columns defaulting to 0, added by an idempotent migration), so `GET /api/drives/{id}` returns them next to the existing keys. They are 0 until detection finishes and reset to 0 when a run starts, so a re-run never accumulates; they are 0 too when the filter is off or the GPS is unusable.
+
 ## Track aggregation and geotagging
 
 `backend/candidates.py` collapses the stored detections into one candidate per tracked object, picks each one's best frame, saves the images and geotags it:

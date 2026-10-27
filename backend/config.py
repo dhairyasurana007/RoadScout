@@ -69,6 +69,35 @@ def hazard_prompts_path() -> Path:
     return Path(raw) if raw else ROOT / "config" / "hazard_prompts.json"
 
 
+# --- Stationary-stretch settings (task 13) ----------------------------------
+
+DEFAULT_STATIONARY_SPEED_MPS = 0.5
+
+_FALSE_WORDS = ("0", "false", "no", "off")
+
+
+def skip_stationary_enabled() -> bool:
+    """Whether detection drops frames recorded while the car was stopped (default: on).
+    Set ROADSCOUT_SKIP_STATIONARY to 0/false/off/no (off) or 1/true/on/yes (on), case-insensitive.
+    Anything else falls back to on. Read at call time."""
+    word = (os.environ.get("ROADSCOUT_SKIP_STATIONARY") or "").strip().lower()
+    return word not in _FALSE_WORDS
+
+
+def stationary_speed_mps() -> float:
+    """GPS speed in m/s below which a frame counts as stationary (a speed exactly at the value counts
+    as moving). Set ROADSCOUT_STATIONARY_SPEED_MPS to a number of 0 or more (default 0.5); an unset,
+    empty, non-numeric, negative or non-finite value falls back to the default. Read at call time."""
+    raw = os.environ.get("ROADSCOUT_STATIONARY_SPEED_MPS")
+    try:
+        value = float(raw) if raw is not None and raw.strip() else DEFAULT_STATIONARY_SPEED_MPS
+    except ValueError:
+        return DEFAULT_STATIONARY_SPEED_MPS
+    if not (0 <= value < float("inf")):  # also rejects NaN
+        return DEFAULT_STATIONARY_SPEED_MPS
+    return value
+
+
 # --- Track aggregation settings (task 8) ------------------------------------
 
 DEFAULT_MIN_TRACK_FRAMES = 3

@@ -42,6 +42,23 @@ DRIVES_PIPELINE_COLUMNS = {
     "finished_at": "TEXT",
 }
 
+# Columns added to drives by the stationary-frame filter (task 13). Integers default to 0 (also for
+# drives created before the migration) and are reset to 0 when a run starts, then written when the
+# detection stage finishes. Same idempotent migration as above.
+#   frames_total                sampled frames in all chunks of the run
+#   stationary_frames_skipped   frames whose GPS speed was below the threshold (0 when the filter is
+#                               off, the GPS is unusable or nothing was stationary)
+#   stationary_chunks_skipped   chunks never sent to the provider because every frame was stationary
+#   chunks_sent                 chunks sent to the provider (skipped + sent = all chunks)
+#   stationary_note             NULL, or one line why the filter was off or the GPS not (fully) usable
+DRIVES_STATIONARY_COLUMNS = {
+    "frames_total": "INTEGER DEFAULT 0",
+    "stationary_frames_skipped": "INTEGER DEFAULT 0",
+    "stationary_chunks_skipped": "INTEGER DEFAULT 0",
+    "chunks_sent": "INTEGER DEFAULT 0",
+    "stationary_note": "TEXT",
+}
+
 
 # Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
 # frame_index is the global frame index and frame_timestamp the global time in seconds from the
@@ -174,6 +191,7 @@ def init_db(path: Path | str | None = None) -> Path:
         )
         conn.execute(DRIVES_SCHEMA)
         _add_missing_columns(conn, "drives", DRIVES_PIPELINE_COLUMNS)
+        _add_missing_columns(conn, "drives", DRIVES_STATIONARY_COLUMNS)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)
