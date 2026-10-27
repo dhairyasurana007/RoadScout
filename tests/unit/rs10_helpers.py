@@ -337,11 +337,12 @@ class Env:
         from backend.main import app
 
         pat = re.compile(r"^/api/drives/\{[^}/]+\}/(process|run|pipeline|start|analy[sz]e|reprocess)/?$")
-        for r in app.routes:
-            if pat.match(getattr(r, "path", "")) and "POST" in (getattr(r, "methods", None) or set()):
-                return r.path
-        paths = sorted(getattr(r, "path", "?") for r in app.routes)
-        pytest.fail("no POST /api/drives/{id}/process route; routes: %s" % paths)
+        # OpenAPI flattens included routers on every FastAPI version; app.routes does not.
+        paths = app.openapi().get("paths", {})
+        for path, ops in paths.items():
+            if pat.match(path) and "post" in ops:
+                return path
+        pytest.fail("no POST /api/drives/{id}/process route; routes: %s" % sorted(paths))
 
     def post_process(self, drive_id):
         path = re.sub(r"\{[^}/]+\}", drive_id, self.process_route())
