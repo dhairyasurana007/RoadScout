@@ -215,7 +215,7 @@ The final build adds everything judges see in the demo: the map, review, privacy
 - [x] **19. `feat: possibly-fixed detection`** Mark a hazard as possibly fixed when later drives pass it without a sighting.
 - [ ] **20. `feat: eval v1`** Ablation of SAM 3.1 alone vs plus Muse Spark on the labeled segments; precision and false alarms per hour from the reviewed full drives (task 17 approve/reject); dedup accuracy on hazards seen across repeated drives; cost and processing time per minute; results written to a markdown report.
 - [ ] **21. `feat: prompt experiments`** Run several SAM 3.1 phrasings and verification prompts against the labeled segments only (not whole drives, to save credits); keep the best as defaults.
-- [ ] **22. `feat: annotated video export`** Side-by-side raw and annotated video for the demo. Run the face and plate blur on the exported segments only (a few short clips, to save credits), so no unblurred faces or plates appear in the demo.
+- [x] **22. `feat: annotated video export`** Side-by-side raw and annotated video for the demo. Run the face and plate blur on the exported segments only (a few short clips, to save credits), so no unblurred faces or plates appear in the demo.
 - [ ] **23. `chore: deploy demo`** One small cloud server, seeded with the blurred results of your real drives only (no raw video, no API key on the server), live link for judges. Requires task 15.
 - [ ] **24. `docs: README and demo script`** Architecture summary, setup, eval results, and the walkthrough you'll record.
 - [ ] **25. `feat: Expo capture app` (stretch)** One-tap recording of video and GPS with upload; only if everything above is done.
