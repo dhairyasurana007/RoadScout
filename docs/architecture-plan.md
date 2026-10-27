@@ -207,7 +207,7 @@ The MVP is done when you can upload one real commute clip with its GPX file and 
 The final build adds everything judges see in the demo: the map, review, privacy, reports and eval numbers. Same rule: one task, one commit, through the agent workflow.
 
 - [x] **13. `feat: skip stationary stretches`** Drop frames where GPS speed is near zero before calling SAM 3.1.
-- [ ] **14. `feat: deduplicate hazards`** Merge candidates of the same class nearby and in the same direction, within and across drives; count sightings; add the hazards table.
+- [x] **14. `feat: deduplicate hazards`** Merge candidates of the same class nearby and in the same direction, within and across drives; count sightings; add the hazards table.
 - [ ] **15. `feat: privacy blur`** Run SAM 3.1 face and license plate prompts on saved frames, blur the masks, use only blurred images in the review UI and reports, and add a Delete video button on each drive that removes its raw video and extracted frames on request. Raw video is otherwise kept locally and never committed. Playwright tests cover the button.
 - [ ] **16. `feat: map view`** Leaflet with OpenStreetMap tiles, a pin per hazard, linked to the list.
 - [ ] **17. `feat: review actions`** Approve, edit class or severity, and reject from the UI; hazard status updates.
