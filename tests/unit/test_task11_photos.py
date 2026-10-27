@@ -157,6 +157,11 @@ def test_path_traversal_in_drive_id_impossible(rs11_done, bad):
     env, did = rs11_done
     it = _first(env, did)
     url = env.photo_url(it)
+    if bad == "..":
+        # An HTTP client collapses /api/drives/../hazards/<id>/photo to /api/hazards/<id>/photo, which is the
+        # (legitimate) global hazard photo route since task 16. Use an id no candidate or hazard has so that
+        # the collapsed URL must be a 404 too: a traversal drive id never serves an image.
+        url = _replace_segment(url, cid_of(it), 987654)
     r = env.client.get(_replace_segment(url, did, bad))
     assert r.status_code in (400, 404, 405, 422), (bad, r.status_code)
     assert not r.content.startswith(b"SQLite format 3")

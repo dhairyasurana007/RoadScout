@@ -1,0 +1,106 @@
+/* Pins are Leaflet divIcons, so Leaflet's default marker images (and their bundling problem) are not used. */
+.rs-pin-icon {
+  background: none;
+  border: none;
+}
+
+.rs-pin {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px #333, 0 1px 4px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font: bold 13px/1 sans-serif;
+  cursor: pointer;
+}
+
+.rs-pin[data-status="new"] { background: #1976d2; }
+.rs-pin[data-status="approved"] { background: #2e7d32; }
+.rs-pin[data-status="rejected"] { background: #757575; }
+.rs-pin[data-status="reported"] { background: #6a1b9a; }
+.rs-pin[data-status="possibly_fixed"] { background: #ef6c00; }
+
+.rs-pin[data-selected="true"] {
+  border-color: #ffeb3b;
+  box-shadow: 0 0 0 2px #000, 0 0 8px 3px rgba(255, 235, 59, 0.9);
+  transform: scale(1.2);
+}
+
+.rs-map-layout {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.rs-map {
+  flex: 2 1 480px;
+  height: 480px;
+  min-width: 0;
+  border: 1px solid #999;
+}
+
+.rs-map-list {
+  flex: 1 1 300px;
+  max-height: 480px;
+  min-width: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid #ccc;
+}
+
+.rs-map-list > li {
+  border-bottom: 1px solid #ddd;
+}
+
+.rs-map-list > li[data-selected="true"] {
+  background: #fff8c5;
+  outline: 2px solid #f9a825;
+  outline-offset: -2px;
+}
+
+.rs-list-button {
+  display: flex;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rs-list-thumb {
+  flex: none;
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  background: #eee;
+}
+
+.rs-list-missing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 72px;
+  background: #eee;
+  color: #666;
+  font-size: 12px;
+  text-align: center;
+}
+
+.rs-popup img {
+  display: block;
+  width: 160px;
+  margin-top: 0.4rem;
+}

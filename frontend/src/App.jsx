@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import HazardMap from "./HazardMap.jsx";
 
 const DEFAULT_POLL_MS = 1500;
 
@@ -94,7 +95,13 @@ function Hazards({ hazards }) {
   );
 }
 
+// The page has two views: the upload/results page and the hazard map. #map opens the map directly.
+function initialTab() {
+  return window.location.hash === "#map" ? "map" : "drives";
+}
+
 export default function App() {
+  const [tab, setTab] = useState(initialTab);
   const [video, setVideo] = useState(null);
   const [gpx, setGpx] = useState(null);
   const [offset, setOffset] = useState("0");
@@ -358,8 +365,13 @@ export default function App() {
   const videoDeleted = Boolean(drive?.video_deleted);
   const deleting = deletingIds.includes(drive?.id);
 
+  function showTab(next) {
+    setTab(next);
+    window.history.replaceState(null, "", next === "map" ? "#map" : window.location.pathname + window.location.search);
+  }
+
   return (
-    <main style={{ fontFamily: "sans-serif", padding: "2rem", maxWidth: 800 }}>
+    <main style={{ fontFamily: "sans-serif", padding: "2rem", maxWidth: tab === "map" ? 1200 : 800 }}>
       <h1>RoadScout</h1>
       <p>Hello, world. Road hazard scouting starts here.</p>
       <p
@@ -371,179 +383,199 @@ export default function App() {
         machine until you delete it.
       </p>
 
-      <h2>Upload a drive</h2>
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.75rem" }}>
-        <label>
-          Video file
-          <br />
-          <input
-            type="file"
-            accept="video/*,.mov,.mp4,.mkv,.avi,.m4v"
-            onChange={(e) => setVideo(e.target.files[0] ?? null)}
-          />
-        </label>
-        <label>
-          GPX file
-          <br />
-          <input
-            type="file"
-            accept=".gpx,application/gpx+xml,text/xml,application/xml"
-            onChange={(e) => setGpx(e.target.files[0] ?? null)}
-          />
-        </label>
-        <label>
-          Clock offset (seconds)
-          <br />
-          <input
-            type="text"
-            inputMode="decimal"
-            value={offset}
-            onChange={(e) => setOffset(e.target.value)}
-          />
-          <br />
-          <small>
-            Added to video time to line it up with the GPX clock. Leave 0 if the clocks agree.
-          </small>
-        </label>
-        <button type="submit" disabled={busy}>
-          {busy ? "Uploading..." : "Upload drive"}
+      <nav aria-label="Views" style={{ display: "flex", gap: "0.5rem", margin: "1rem 0" }}>
+        <button
+          type="button"
+          data-testid="tab-drives"
+          aria-pressed={tab === "drives"}
+          onClick={() => showTab("drives")}
+        >
+          Upload and results
         </button>
-      </form>
-
-      <h2>Open an existing drive</h2>
-      <form onSubmit={onLoad} style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
-        <label>
-          Drive ID
-          <br />
-          <input
-            type="text"
-            data-testid="load-drive-id"
-            value={loadId}
-            onChange={(e) => setLoadId(e.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={loading}>
-          {loading ? "Loading..." : "Open drive"}
+        <button type="button" data-testid="tab-map" aria-pressed={tab === "map"} onClick={() => showTab("map")}>
+          Hazard map
         </button>
-      </form>
+      </nav>
 
-      {error && (
-        <p role="alert" style={{ color: "#b00020" }}>
-          {error}
-        </p>
-      )}
-
-      {drive && (
-        <section aria-label="Drive status">
-          <h2>{origin === "created" ? "Drive created" : "Drive loaded"}</h2>
-          <dl>
-            <dt>Drive ID</dt>
-            <dd data-testid="drive-id">{drive.id}</dd>
-            <dt>Status</dt>
-            <dd data-testid="drive-status">{drive.status}</dd>
-            {drive.stage && drive.status !== "uploaded" && (
-              <>
-                <dt>Stage</dt>
-                <dd data-testid="drive-stage">{drive.stage}</dd>
-              </>
-            )}
-            <dt>Video start time</dt>
-            <dd data-testid="drive-started-at">
-              {drive.started_at}
-              {drive.started_at_fell_back && " (not in video metadata; estimated)"}
-            </dd>
-            <dt>Clock offset</dt>
-            <dd data-testid="drive-offset">{drive.clock_offset_seconds} s</dd>
-            <dt>Raw video</dt>
-            <dd data-testid="drive-video-state">
-              {videoDeleted
-                ? `Deleted${drive.video_deleted_at ? ` at ${drive.video_deleted_at}` : ""}`
-                : "Kept on this machine"}
-            </dd>
-          </dl>
-
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-            <button
-              type="button"
-              data-testid="start-processing"
-              onClick={onStart}
-              disabled={starting || processing || videoDeleted}
-            >
-              {starting || processing ? "Processing..." : "Start processing"}
+      {tab === "map" ? (
+        <HazardMap />
+      ) : (
+        <>
+          <h2>Upload a drive</h2>
+          <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.75rem" }}>
+            <label>
+              Video file
+              <br />
+              <input
+                type="file"
+                accept="video/*,.mov,.mp4,.mkv,.avi,.m4v"
+                onChange={(e) => setVideo(e.target.files[0] ?? null)}
+              />
+            </label>
+            <label>
+              GPX file
+              <br />
+              <input
+                type="file"
+                accept=".gpx,application/gpx+xml,text/xml,application/xml"
+                onChange={(e) => setGpx(e.target.files[0] ?? null)}
+              />
+            </label>
+            <label>
+              Clock offset (seconds)
+              <br />
+              <input
+                type="text"
+                inputMode="decimal"
+                value={offset}
+                onChange={(e) => setOffset(e.target.value)}
+              />
+              <br />
+              <small>
+                Added to video time to line it up with the GPX clock. Leave 0 if the clocks agree.
+              </small>
+            </label>
+            <button type="submit" disabled={busy}>
+              {busy ? "Uploading..." : "Upload drive"}
             </button>
+          </form>
 
-            {confirmingDelete && !videoDeleted ? (
-              <span data-testid="delete-video-confirm" role="group" aria-label="Confirm deleting the video">
-                <strong>Delete video?</strong>{" "}
+          <h2>Open an existing drive</h2>
+          <form onSubmit={onLoad} style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
+            <label>
+              Drive ID
+              <br />
+              <input
+                type="text"
+                data-testid="load-drive-id"
+                value={loadId}
+                onChange={(e) => setLoadId(e.target.value)}
+              />
+            </label>
+            <button type="submit" disabled={loading}>
+              {loading ? "Loading..." : "Open drive"}
+            </button>
+          </form>
+
+          {error && (
+            <p role="alert" style={{ color: "#b00020" }}>
+              {error}
+            </p>
+          )}
+
+          {drive && (
+            <section aria-label="Drive status">
+              <h2>{origin === "created" ? "Drive created" : "Drive loaded"}</h2>
+              <dl>
+                <dt>Drive ID</dt>
+                <dd data-testid="drive-id">{drive.id}</dd>
+                <dt>Status</dt>
+                <dd data-testid="drive-status">{drive.status}</dd>
+                {drive.stage && drive.status !== "uploaded" && (
+                  <>
+                    <dt>Stage</dt>
+                    <dd data-testid="drive-stage">{drive.stage}</dd>
+                  </>
+                )}
+                <dt>Video start time</dt>
+                <dd data-testid="drive-started-at">
+                  {drive.started_at}
+                  {drive.started_at_fell_back && " (not in video metadata; estimated)"}
+                </dd>
+                <dt>Clock offset</dt>
+                <dd data-testid="drive-offset">{drive.clock_offset_seconds} s</dd>
+                <dt>Raw video</dt>
+                <dd data-testid="drive-video-state">
+                  {videoDeleted
+                    ? `Deleted${drive.video_deleted_at ? ` at ${drive.video_deleted_at}` : ""}`
+                    : "Kept on this machine"}
+                </dd>
+              </dl>
+
+              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   type="button"
-                  data-testid="delete-video-yes"
-                  onClick={onDeleteVideo}
-                  disabled={deleting || processing || starting}
+                  data-testid="start-processing"
+                  onClick={onStart}
+                  disabled={starting || processing || videoDeleted}
                 >
-                  {deleting ? "Deleting..." : "Yes, delete"}
-                </button>{" "}
-                <button
-                  type="button"
-                  data-testid="delete-video-cancel"
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={deleting}
-                >
-                  Cancel
+                  {starting || processing ? "Processing..." : "Start processing"}
                 </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                data-testid="delete-video"
-                onClick={() => {
-                  setDeleteError("");
-                  setConfirmingDelete(true);
-                }}
-                disabled={processing || starting || videoDeleted}
-              >
-                {videoDeleted ? "Video deleted" : "Delete video"}
-              </button>
-            )}
-          </div>
-          {videoDeleted && (
-            <p data-testid="video-deleted-hint" style={{ color: "#555" }}>
-              The raw video and unblurred frames were deleted from this machine. The blurred results below
-              are kept, but this drive cannot be processed again.
-            </p>
-          )}
-          {deleteError && (
-            <p data-testid="delete-video-error" role="alert" style={{ color: "#b00020" }}>
-              {deleteError}
-            </p>
-          )}
 
-          {pollError && (
-            <p data-testid="poll-error" style={{ color: "#8a5a00" }}>
-              {pollError}
-            </p>
-          )}
+                {confirmingDelete && !videoDeleted ? (
+                  <span data-testid="delete-video-confirm" role="group" aria-label="Confirm deleting the video">
+                    <strong>Delete video?</strong>{" "}
+                    <button
+                      type="button"
+                      data-testid="delete-video-yes"
+                      onClick={onDeleteVideo}
+                      disabled={deleting || processing || starting}
+                    >
+                      {deleting ? "Deleting..." : "Yes, delete"}
+                    </button>{" "}
+                    <button
+                      type="button"
+                      data-testid="delete-video-cancel"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={deleting}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="delete-video"
+                    onClick={() => {
+                      setDeleteError("");
+                      setConfirmingDelete(true);
+                    }}
+                    disabled={processing || starting || videoDeleted}
+                  >
+                    {videoDeleted ? "Video deleted" : "Delete video"}
+                  </button>
+                )}
+              </div>
+              {videoDeleted && (
+                <p data-testid="video-deleted-hint" style={{ color: "#555" }}>
+                  The raw video and unblurred frames were deleted from this machine. The blurred results below
+                  are kept, but this drive cannot be processed again.
+                </p>
+              )}
+              {deleteError && (
+                <p data-testid="delete-video-error" role="alert" style={{ color: "#b00020" }}>
+                  {deleteError}
+                </p>
+              )}
 
-          {drive.status === "failed" && (
-            <div data-testid="drive-failed" style={{ color: "#b00020" }}>
-              <strong>Processing failed</strong>
-              {drive.failed_stage && (
+              {pollError && (
+                <p data-testid="poll-error" style={{ color: "#8a5a00" }}>
+                  {pollError}
+                </p>
+              )}
+
+              {drive.status === "failed" && (
+                <div data-testid="drive-failed" style={{ color: "#b00020" }}>
+                  <strong>Processing failed</strong>
+                  {drive.failed_stage && (
+                    <>
+                      {" "}
+                      at stage <span data-testid="drive-failed-stage">{drive.failed_stage}</span>
+                    </>
+                  )}
+                  <p data-testid="drive-error">{drive.error || "Unknown error."}</p>
+                </div>
+              )}
+
+              {drive.status === "done" && (
                 <>
-                  {" "}
-                  at stage <span data-testid="drive-failed-stage">{drive.failed_stage}</span>
+                  <h2>Verified hazards</h2>
+                  <Hazards hazards={hazards} />
                 </>
               )}
-              <p data-testid="drive-error">{drive.error || "Unknown error."}</p>
-            </div>
+            </section>
           )}
-
-          {drive.status === "done" && (
-            <>
-              <h2>Verified hazards</h2>
-              <Hazards hazards={hazards} />
-            </>
-          )}
-        </section>
+        </>
       )}
     </main>
   );

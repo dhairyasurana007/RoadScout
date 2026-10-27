@@ -259,6 +259,20 @@ API (read-only):
 - `GET /api/drives/{id}/hazards` returns `200` with a JSON list of the drive's accepted hazards (verdict `accepted` and `is_hazard`), in drive-time order, or `[]`. `404` for an unknown drive. Each item has `candidate_id` (also as `id`), `drive_id`, `hazard_class` (the verdict's class), `detector_class`, `severity` (1 to 3), `confidence` (0 to 1), `lane`, `reason`, `report_description`, `lat`, `lon`, `heading` (all `null` unless `geotag_status` is `ok`; the hazard is still listed), `geotag_status`, `best_timestamp`, `first_timestamp`, `last_timestamp`, `frames_seen`, `blur_status`, `photo_url` and `crop_url` (`null` when there is no crop). No file paths are returned.
 - `GET /api/drives/{id}/hazards/{candidate_id}/photo` serves the BLURRED best-frame JPEG (`image/jpeg`, `Cache-Control: no-store`); add `?variant=crop` for the blurred crop. It never serves an unblurred file: `404` for an unknown drive or candidate, a candidate of another drive, a rejected or non-hazard candidate, a candidate whose `blur_status` is not `ok` (no blurred path), a missing file, or a stored path outside `data/storage/<drive id>/candidates/`. A non-integer candidate id is `422`.
 
+## Hazard map (local only)
+
+The **Hazard map** tab on the page (`#map` opens it directly) shows the deduplicated hazards of all drives (`backend/hazards.py`, `frontend/src/HazardMap.jsx`). It uses Leaflet 1.9.4 (pinned) with OpenStreetMap raster tiles (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`, attribution "© OpenStreetMap contributors"). Tiles are fetched by your browser from OpenStreetMap; nothing else leaves the machine and no photo is sent anywhere.
+
+- One pin per hazard, coloured by status (new blue, approved green, rejected grey, reported purple, possibly fixed orange) and labelled with the severity. Pins are Leaflet `divIcon`s, so Leaflet's default marker images are not used. Clicking a pin opens a popup (class, severity, status, sightings, blurred photo), highlights the matching list item and scrolls it into view.
+- Next to the map, a list with thumbnail, class, severity, status, sightings and location. Clicking an item highlights it, zooms to its pin (at least zoom 15) and opens the popup. Clicking an empty part of the map clears the selection.
+- The view starts fitted to all pins; with no hazards it shows the Northern Virginia / Maryland commute area (centre 38.9, -77.2, zoom 9). A status filter and a **Refresh** button reload from the API. States: loading, "No hazards yet", and an error message.
+- Selected state is in data attributes (`data-selected` on pins and list items, `data-selected-hazard-id` on the section); the map container carries `data-map-lat`, `data-map-lon`, `data-map-zoom`.
+
+API (read-only, GET only):
+
+- `GET /api/hazards` returns `200` with a bare JSON list ordered by `id`, `[]` when empty, all statuses unless filtered. Items: `id`, `hazard_class`, `lat`, `lon`, `direction`, `severity`, `confidence`, `sightings`, `candidate_count`, `first_seen`, `last_seen`, `status`, `photo_url` (`/api/hazards/{id}/photo`) and `crop_url` (`/api/hazards/{id}/photo?variant=crop`). Both URLs are `null` when the hazard has no such image or the file cannot be served, so the list never points at a 404. Hazards without a position are not listed. No file paths are returned. Filters: `?status=` (`new`, `approved`, `rejected`, `reported`, `possibly_fixed`; anything else is `422`) and `?drive_id=` (hazards with a member candidate in that drive; unknown drive gives `[]`).
+- `GET /api/hazards/{id}/photo[?variant=best|crop]` serves the BLURRED photo stored in `hazards.photo_path` (or `crop_path`) as `image/jpeg` with `Cache-Control: no-store`. Fail closed, `404` unless the hazard exists, the path is set, and the file exists directly in `<storage>/<drive id>/candidates/` and is not the resolved `best_frame_path` or `crop_path` of any candidate of any drive (the unblurred originals). The check uses the candidates table, not file names. A non-integer id or an unknown `variant` is `422`; other query parameters are ignored.
+
 ## Tests
 
 pytest (unit tests, from the repo root):
@@ -285,8 +299,8 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Layout
 
-- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`), privacy blur (`privacy.py`, `config/privacy_prompts.json`), Delete video (`video_deletion.py`), results routes (`results.py`)
-- `frontend/` Vite React app; Playwright tests in `frontend/e2e/`
+- `backend/` FastAPI app (`main.py`), settings (`config.py`), SQLite helpers (`db.py`), drive upload routes (`drives.py`), file storage (`storage.py`), ffprobe and GPX checks (`media.py`), ffmpeg preprocessing (`preprocess.py`), GPX parsing and position lookup (`gpx_track.py`), hazard prompts (`hazard_prompts.py`, `config/hazard_prompts.json`), SAM 3.1 detection per chunk (`detection.py`), track aggregation and geotagging (`candidates.py`), Muse Spark verification (`verification.py`, `verification_prompt.py`, `config/verification_prompt.json`), pipeline runner (`pipeline.py`), privacy blur (`privacy.py`, `config/privacy_prompts.json`), Delete video (`video_deletion.py`), results routes (`results.py`), hazard map routes (`hazards.py`)
+- `frontend/` Vite React app (upload/results page in `src/App.jsx`, hazard map in `src/HazardMap.jsx`); Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
 - `docs/architecture-plan.md` the plan; `scripts/preflight.py` environment checks
