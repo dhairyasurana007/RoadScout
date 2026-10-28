@@ -77,11 +77,14 @@ def _safe_env(monkeypatch):
 
 @pytest.fixture()
 def rec(monkeypatch):
-    """Record sleeps instead of sleeping (covers late-bound and default-bound sleep hooks)."""
+    """Never really sleep. ``rec.sleeps`` / ("sleep", s) events are only the provider's own retry waits."""
     r = Recorder()
 
     def fake_sleep(seconds=0.0, *a, **k):
-        r.events.append(("sleep", float(seconds)))
+        # Every time.sleep call in the process lands here (e.g. subprocess/ffprobe polling with tiny, doubling
+        # waits on a slow machine). Tagged "global_sleep" so it is never mistaken for a retry wait: retry waits
+        # are only the ("sleep", s) events written by the provider's own sleep= argument (see rs26_helpers).
+        r.events.append(("global_sleep", float(seconds)))
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
     try:
