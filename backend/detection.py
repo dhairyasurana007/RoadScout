@@ -54,7 +54,16 @@ stationary when its speed is below the threshold (exactly at the threshold count
 - The summary carries ``frames_total``, ``stationary_frames_skipped``, ``chunks_total``, ``chunks_sent``,
   ``stationary_chunks_skipped``. ``chunk_count`` is the number of chunks sent to the provider.
 
-Rules:
+Resuming (task 26c). ``resume=True`` (the pipeline always passes it) changes only how results are stored:
+each chunk's rows are committed in their own transaction together with a ``detection_chunks`` record
+(chunk done, provider frame records, detections dropped on stationary frames). A chunk already
+recorded as done is NOT sent to the provider again; rows of chunks not recorded as done are removed
+first. The summary is computed from the stored rows, so it is identical to an uninterrupted run's
+(stationary skips are recomputed from the GPX each time). If the provider fails at chunk k,
+``DetectionError`` is raised and chunks before k stay stored and done. Without ``resume`` nothing below
+changes (all-or-nothing, one transaction, the drive's rows and chunk records replaced).
+
+Rules (without ``resume``):
 
 - An empty result for a chunk is success and adds no rows. No chunks at all is also success.
 - Idempotent per drive: a run first collects every chunk's detections in memory, then in ONE
@@ -224,8 +233,12 @@ def run_detection(
     video_start: Any = None,
     clock_offset_seconds: float | None = None,
     storage: Any = None,
+    resume: bool = False,
 ) -> DetectionSummary:
     """Detect hazards in every chunk and store the raw output. See the module docstring.
+
+    ``resume=True`` commits each chunk as soon as it is done and skips chunks already recorded as done
+    (see "Resuming" in the module docstring); the default keeps the all-or-nothing behaviour.
 
     Stationary frames (GPS speed below ``stationary_speed_mps``) are skipped: a chunk with only
     stationary frames is not sent to the provider; a chunk with some is sent once, unchanged, and the
@@ -266,6 +279,11 @@ def run_detection(
         if note:
             logger.info("stationary filter for drive %s: %s", drive_id, note)
 
+    target = init_db(db_path)
+    done: set[int] = set()
+    if resume:
+        done = _forget_unfinished(drive_id, target, {i.index for i in infos})
+
     all_rows: list[tuple] = []
     per_chunk: dict[int, int] = {}
     skipped: list[int] = []
@@ -276,38 +294,52 @@ def run_detection(
             per_chunk[info.index] = 0
             skipped.append(info.index)
             continue
+        if info.index in done:  # committed by an earlier run: no provider call
+            continue
         try:
             result = provider.detect(info.path, sent)
             rows, n_frames = _map_chunk(drive_id, info, result, stamps, prompts)
+            chunk_dropped = 0
             if stationary:
                 kept = [r for r in rows if not (r[3] < info.frame_count and r[2] in stationary)]
-                dropped += len(rows) - len(kept)
+                chunk_dropped = len(rows) - len(kept)
                 rows = kept
         except Exception as e:
+            kept_note = "chunks before it were kept" if resume else "nothing was stored"
             raise DetectionError(
                 f"detection failed for chunk {info.index} ({Path(info.path).name}) of drive "
-                f"{drive_id}; nothing was stored: {type(e).__name__}: {e}",
+                f"{drive_id}; {kept_note}: {type(e).__name__}: {e}",
                 chunk_index=info.index, chunk_path=info.path,
             ) from e
+        if resume:
+            _commit_chunk(drive_id, info.index, rows, n_frames, chunk_dropped, target)
         all_rows.extend(rows)
         per_chunk[info.index] = len(rows)
         frame_total += n_frames
+        dropped += chunk_dropped
 
-    target = init_db(db_path)
-    conn = get_connection(target)
-    try:
-        with conn:  # one transaction: commit on success, roll back on any error
-            conn.execute("DELETE FROM detections WHERE drive_id = ?", (drive_id,))
-            conn.executemany(_INSERT, all_rows)
-    finally:
-        conn.close()
+    if resume:  # the stored rows are the truth: this run's numbers must equal an uninterrupted run's
+        per_chunk, detection_count, track_count, frame_total, dropped = _stored_totals(
+            drive_id, target, [i.index for i in infos])
+        for index in skipped:
+            per_chunk[index] = 0
+    else:
+        conn = get_connection(target)
+        try:
+            with conn:  # one transaction: commit on success, roll back on any error
+                conn.execute("DELETE FROM detections WHERE drive_id = ?", (drive_id,))
+                conn.execute("DELETE FROM detection_chunks WHERE drive_id = ?", (drive_id,))
+                conn.executemany(_INSERT, all_rows)
+        finally:
+            conn.close()
+        detection_count, track_count = len(all_rows), len({r[8] for r in all_rows})
 
     summary = DetectionSummary(
         drive_id=drive_id,
         chunk_count=len(infos) - len(skipped),
         frame_count=frame_total,
-        detection_count=len(all_rows),
-        track_count=len({r[8] for r in all_rows}),
+        detection_count=detection_count,
+        track_count=track_count,
         prompts=list(sent),
         detections_per_chunk=per_chunk,
         frames_total=sum(i.frame_count for i in infos),
@@ -323,6 +355,54 @@ def run_detection(
                 drive_id, summary.chunks_sent, summary.chunks_total, summary.stationary_frames_skipped,
                 summary.frames_total, summary.detection_count, summary.track_count)
     return summary
+
+
+def _forget_unfinished(drive_id: str, target: Path, chunk_indexes: set[int]) -> set[int]:
+    """Resume: the chunks recorded as done. Detection rows of any other chunk (and records of chunks that
+    no longer exist) are removed, so every stored row belongs to a chunk that finished."""
+    conn = get_connection(target)
+    try:
+        with conn:
+            done = {r["chunk"] for r in conn.execute(
+                "SELECT chunk FROM detection_chunks WHERE drive_id = ?", (drive_id,))} & chunk_indexes
+            marks = ",".join("?" for _ in done)
+            keep = f" AND chunk NOT IN ({marks})" if done else ""
+            conn.execute("DELETE FROM detections WHERE drive_id = ?" + keep, (drive_id, *sorted(done)))
+            conn.execute("DELETE FROM detection_chunks WHERE drive_id = ?" + keep, (drive_id, *sorted(done)))
+        return done
+    finally:
+        conn.close()
+
+
+def _commit_chunk(drive_id: str, chunk: int, rows: list[tuple], frames: int, dropped: int, target: Path) -> None:
+    """One transaction: replace this chunk's rows and record the chunk as done."""
+    conn = get_connection(target)
+    try:
+        with conn:
+            conn.execute("DELETE FROM detections WHERE drive_id = ? AND chunk = ?", (drive_id, chunk))
+            conn.executemany(_INSERT, rows)
+            conn.execute(
+                "INSERT OR REPLACE INTO detection_chunks (drive_id, chunk, frames, dropped) VALUES (?, ?, ?, ?)",
+                (drive_id, chunk, frames, dropped))
+    finally:
+        conn.close()
+
+
+def _stored_totals(drive_id: str, target: Path, chunk_indexes: list[int]) -> tuple[dict[int, int], int, int, int, int]:
+    """(rows per chunk, rows, distinct tracks, provider frame records, dropped detections) from the database."""
+    conn = get_connection(target)
+    try:
+        per = {r["chunk"]: r["n"] for r in conn.execute(
+            "SELECT chunk, COUNT(*) AS n FROM detections WHERE drive_id = ? GROUP BY chunk", (drive_id,))}
+        tracks = conn.execute(
+            "SELECT COUNT(DISTINCT track_key) FROM detections WHERE drive_id = ?", (drive_id,)).fetchone()[0]
+        frames, dropped = conn.execute(
+            "SELECT COALESCE(SUM(frames), 0), COALESCE(SUM(dropped), 0) FROM detection_chunks WHERE drive_id = ?",
+            (drive_id,)).fetchone()
+    finally:
+        conn.close()
+    per_chunk = {i: per.get(i, 0) for i in chunk_indexes}
+    return per_chunk, sum(per_chunk.values()), int(tracks), int(frames), int(dropped)
 
 
 def _frame_times(infos: list[_ChunkInfo], stamps: dict[int, float]) -> dict[int, float]:

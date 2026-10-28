@@ -4,7 +4,7 @@
     result = run_pipeline(drive_id)           # synchronous; the API runs it as a background task
 
 ``run_pipeline(drive_id, *, provider=None, db_path=None, storage=None, work_dir=None, fps=None,
-chunk_seconds=None, height=None, min_frames=None, min_confidence=None, claimed=False)``
+chunk_seconds=None, height=None, min_frames=None, min_confidence=None, claimed=False, restart=False)``
 
 Stages, in order (each one is the function of an earlier task):
 
@@ -34,6 +34,8 @@ Drive status and stage (columns of the ``drives`` table, also keys of the drive 
             skipped candidates after network errors that outlived the retries (task 26b), for example
             "2 of 84 candidates could not be verified because of network errors and were skipped;
             process the drive again to retry them." Cleared when a run starts or results are cleared.
+    resumed       true when the latest run resumed an earlier run's work (task 26c), else false
+    resumed_from  the stage the latest run resumed at, else null
     updated_at    UTC ISO time of the last status or stage change
     finished_at   UTC ISO time the last run ended; NULL while running
 
@@ -71,12 +73,33 @@ Failure behaviour:
   server log only, never to the API.
 - It raises only for caller mistakes: ``DriveNotFoundError`` (unknown drive id) and
   ``DriveBusyError`` (the drive is already processing).
-- What is kept after a failure: every run starts by clearing the drive's old derived results
-  (detections, candidates with their verdicts and images, and the default work folder). So after a
-  failure at stage S, the results of the stages BEFORE S from this run are kept and are consistent
-  with each other, and nothing exists for S or later stages (no stale rows from an older run).
-  Examples: verifying fails -> detections and candidates stay, no verdicts; detecting fails -> only
-  the preprocessed chunks stay. Each stage is itself all-or-nothing (see its module).
+- What is kept after a failure: a CLEAN run starts by clearing the drive's old derived results
+  (detections, candidates with their verdicts and images, checkpoints and the default work folder), so
+  nothing stale from an older run exists. After a failure at stage S, the results of the stages BEFORE S
+  from this run are kept and are consistent with each other. Detecting and verifying commit as they go
+  (see "Resuming"), so a failure at chunk k keeps the detections of chunks before k and a failure at
+  candidate j keeps the verdicts before j; the other stages are all-or-nothing (see their modules).
+
+Resuming (task 26c): a drive in status ``failed`` (an error, or "interrupted" by a server restart) whose
+earlier run left checkpoints RESUMES instead of starting clean, when the run fingerprint still matches
+(``backend/checkpoints.py``: provider name, hazard prompts hash, fps, chunk seconds, max height, stationary
+filter settings, clock offset, raw video size and modification time). A drive that is ``done`` or
+``uploaded`` always runs clean, and so does ``restart=True`` (the route's ``?restart=true``). A resumed run
+(drive JSON ``resumed`` true, ``resumed_from`` the first stage with work left):
+
+    preprocessing  reuses the work folder when ``frame_timestamps.json`` and all its chunk files are
+                   there (no ffmpeg); an incomplete folder means a clean start
+    detecting      ``run_detection(resume=True)``: chunks committed one by one are not sent again; the
+                   summary and the stationary counts equal an uninterrupted run's
+    aggregating    skipped when recorded complete, the detections it used are unchanged, ``min_frames``
+                   is the same and the candidate images exist; otherwise it runs again
+    verifying      ``verify_drive(resume=True)``: each verdict is committed as obtained; candidates with a
+                   verdict of the same model and prompt version are not sent again
+    blurring, deduplicating, checking_fixes   always run in full
+
+So a resumed run ends with the same detections, candidates, verdicts, hazards and blurred images as an
+uninterrupted one with the same provider results. Nothing unblurred is served either way (the blur stage
+rebuilds every blurred copy). Checkpoints live in ``pipeline_runs`` and ``detection_chunks``.
 - Blurring fails closed (``backend/privacy.py``): if the provider fails or returns invalid masks for any
   accepted candidate, that candidate gets ``blur_status = 'failed'`` and no blurred image, and the drive ends
   ``failed`` with ``error = "blurring: ..."``; the detections, candidates and verdicts of this run stay, and
@@ -106,7 +129,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .candidates import AggregationSummary, aggregate_drive
+from . import checkpoints as _cp
+from .candidates import GEOTAG_OK, AggregationSummary, aggregate_drive, load_candidates
 from .db import get_connection, init_db
 from . import dedup as _dedup
 from .privacy import BlurSummary, blur_drive
@@ -114,7 +138,7 @@ from .dedup import DedupSummary, refresh_hazards_quietly
 from . import possibly_fixed as _possibly_fixed
 from .possibly_fixed import FixCheckSummary
 from .detection import DetectionSummary, run_detection
-from .preprocess import PreprocessResult, preprocess_video
+from .preprocess import PreprocessResult, load_preprocess_result, preprocess_video
 from .providers import ModelProvider, get_provider
 from .verification import VerificationSummary, verify_drive
 
@@ -172,6 +196,8 @@ class PipelineResult:
     blur: BlurSummary | None = None
     dedup: DedupSummary | None = None
     fixes: FixCheckSummary | None = None
+    resumed: bool = False  # this run resumed an earlier interrupted run's work (task 26c)
+    resumed_from: str | None = None  # the first stage that still had work to do
 
     @property
     def ok(self) -> bool:
@@ -261,6 +287,7 @@ def claim_drive(drive_id: str, *, db_path: str | Path | None = None) -> dict[str
         with conn:
             cur = conn.execute(
                 "UPDATE drives SET status = ?, stage = ?, error = NULL, failed_stage = NULL, warning = NULL,"
+                " resumed = 0, resumed_from = NULL,"
                 " finished_at = NULL, updated_at = ? WHERE id = ? AND status != ? AND video_deleted_at IS NULL",
                 (STATUS_PROCESSING, STAGE_QUEUED, now, drive_id, STATUS_PROCESSING),
             )
@@ -315,6 +342,7 @@ def clear_results(drive_id: str, *, db_path: str | Path | None = None, work_dir:
             conn.execute("DELETE FROM candidates WHERE drive_id = ?", (drive_id,))
             conn.execute("DELETE FROM detections WHERE drive_id = ?", (drive_id,))
             conn.execute("UPDATE drives SET warning = NULL WHERE id = ?", (drive_id,))
+            _cp.delete_checkpoints(conn, drive_id)
     finally:
         conn.close()
     if old:
@@ -346,6 +374,7 @@ def run_pipeline(
     min_frames: int | None = None,
     min_confidence: float | None = None,
     claimed: bool = False,
+    restart: bool = False,
     skip_stationary: bool | None = None,
     stationary_speed_mps: float | None = None,
     distance_m: float | None = None,
@@ -364,7 +393,8 @@ def run_pipeline(
     detecting stage (task 13; None means ROADSCOUT_SKIP_STATIONARY / ROADSCOUT_STATIONARY_SPEED_MPS).
     ``distance_m`` / ``heading_tolerance_deg`` tune the deduplicating stage (task 14; None means
     ROADSCOUT_DEDUP_DISTANCE_M / ROADSCOUT_DEDUP_HEADING_TOLERANCE_DEG). ``blur_dilate_px`` is the margin the
-    blurring stage grows each mask by (None means ROADSCOUT_BLUR_DILATE_PX, 4).
+    blurring stage grows each mask by (None means ROADSCOUT_BLUR_DILATE_PX, 4). ``restart=True`` forces a
+    clean start for a failed drive (otherwise it resumes when it can, see the module docstring).
     """
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
@@ -391,21 +421,45 @@ def run_pipeline(
         if drive.get("video_deleted_at"):  # before clearing: the kept blurred results must survive
             raise FileNotFoundError("the raw video was deleted, so this drive cannot be processed again")
 
-        # Start from a clean slate so a failure never leaves stale rows from an older run.
-        clear_results(drive_id, db_path=db, work_dir=work if default_work else None)
-        for stale in Path(candidates_dir).glob("*_blur.jpg*"):  # leftovers of a crashed earlier run
-            stale.unlink(missing_ok=True)
+        video = storage.local_path(drive["video_path"])
+        fingerprint = _cp.compute_fingerprint(
+            provider_name=_provider_name(provider), fps=fps, chunk_seconds=chunk_seconds, max_height=height,
+            clock_offset_seconds=float(drive["clock_offset_seconds"] or 0.0), video=video,
+            skip_stationary=skip_stationary, stationary_speed_mps=stationary_speed_mps,
+        )
+        plan = None if restart else _cp.plan_resume(db, drive_id, fingerprint)
+        reuse: PreprocessResult | None = None
+        if plan is not None:
+            reuse = load_preprocess_result(work) if STAGE_PREPROCESSING in plan["stages"] else None
+            if reuse is None:  # the work folder is not complete: nothing can be trusted, start clean
+                plan = None
+
+        if plan is None:
+            # Start from a clean slate so a failure never leaves stale rows from an older run.
+            clear_results(drive_id, db_path=db, work_dir=work if default_work else None)
+            for stale in Path(candidates_dir).glob("*_blur.jpg*"):  # leftovers of a crashed earlier run
+                stale.unlink(missing_ok=True)
+            _cp.start_run(db, drive_id, fingerprint)
+            _update(db, drive_id, resumed=0, resumed_from=None)
+        else:
+            result.resumed = True
+            result.resumed_from = _resume_stage(db, drive_id, plan, min_frames)
+            _update(db, drive_id, resumed=1, resumed_from=result.resumed_from)
+            logger.info("resuming drive %s at %s", drive_id, result.resumed_from)
         _update(db, drive_id, frames_total=0, stationary_frames_skipped=0, stationary_chunks_skipped=0,
                 chunks_sent=0, stationary_note=None)
 
         stage = STAGE_PREPROCESSING
         _update(db, drive_id, status=STATUS_PROCESSING, stage=stage)
-        video = storage.local_path(drive["video_path"])
         if not Path(video).is_file():
             raise FileNotFoundError("the stored video file is missing")
-        result.preprocess = preprocess_video(
-            video, work, fps=fps, chunk_seconds=chunk_seconds, height=height
-        )
+        if reuse is not None:  # complete work folder from the earlier run: no ffmpeg
+            result.preprocess = reuse
+        else:
+            result.preprocess = preprocess_video(
+                video, work, fps=fps, chunk_seconds=chunk_seconds, height=height
+            )
+        _cp.mark_stage(db, drive_id, stage)
 
         stage = STAGE_DETECTING
         _update(db, drive_id, stage=stage)
@@ -416,22 +470,35 @@ def run_pipeline(
             skip_stationary=skip_stationary, stationary_speed_mps=stationary_speed_mps,
             gpx_track=drive,  # the drive record: GPX path, started_at and clock offset (fails open)
             storage=storage,
+            resume=True,  # each chunk is committed as it finishes; chunks done earlier are not re-sent
         )
         _record_stationary_counts(db, drive_id, result.detection)
+        _cp.mark_stage(db, drive_id, stage)
 
         stage = STAGE_AGGREGATING
         _update(db, drive_id, stage=stage)
-        result.aggregation = aggregate_drive(
-            drive_id,
-            result.preprocess,
-            gpx_track=drive,  # the drive record: GPX path, started_at and clock offset
-            video_start=datetime.fromisoformat(drive["started_at"]),
-            clock_offset_seconds=float(drive["clock_offset_seconds"] or 0.0),
-            min_frames=min_frames,
-            db_path=db,
-            output_dir=candidates_dir,
-            storage=storage,
-        )
+        wanted_min_frames = min_frames if min_frames is not None else config.min_track_frames()
+        reused = _reuse_aggregation(db, drive_id, plan, result.detection, wanted_min_frames)
+        if reused is not None:
+            result.aggregation = reused
+        else:
+            result.aggregation = aggregate_drive(
+                drive_id,
+                result.preprocess,
+                gpx_track=drive,  # the drive record: GPX path, started_at and clock offset
+                video_start=datetime.fromisoformat(drive["started_at"]),
+                clock_offset_seconds=float(drive["clock_offset_seconds"] or 0.0),
+                min_frames=min_frames,
+                db_path=db,
+                output_dir=candidates_dir,
+                storage=storage,
+            )
+        agg = result.aggregation
+        _cp.mark_stage(db, drive_id, stage, {
+            "signature": _cp.detections_signature(drive_id, db), "min_frames": wanted_min_frames,
+            "detection_count": agg.detection_count, "track_count": agg.track_count,
+            "dropped_track_count": agg.dropped_track_count, "candidate_count": agg.candidate_count,
+        })
 
         stage = STAGE_VERIFYING
         _update(db, drive_id, stage=stage)
@@ -441,18 +508,23 @@ def run_pipeline(
             provider=provider,
             min_confidence=min_confidence,
             db_path=db,
+            resume=True,  # each verdict is committed as obtained; verified candidates are not re-sent
         )
+        _cp.mark_stage(db, drive_id, stage, {"skipped": len(result.verification.failed_candidate_ids)})
 
+        # Blurring, deduplicating and checking_fixes always run in full (idempotent and cheap).
         stage = STAGE_BLURRING
         _update(db, drive_id, stage=stage)
         result.blur = blur_drive(drive_id, provider=provider, db_path=db,
                                 dilate_px=blur_dilate_px)
+        _cp.mark_stage(db, drive_id, stage)
 
         stage = STAGE_DEDUPLICATING
         _update(db, drive_id, stage=stage)
         result.dedup = deduplicate_drive(
             drive_id, db_path=db, distance_m=distance_m, heading_tolerance_deg=heading_tolerance_deg
         )
+        _cp.mark_stage(db, drive_id, stage)
 
         stage = STAGE_CHECKING_FIXES
         _update(db, drive_id, stage=stage)
@@ -474,11 +546,69 @@ def run_pipeline(
     now = _now()
     _update(db, drive_id, status=STATUS_DONE, stage=STAGE_DONE, error=None, failed_stage=None,
             warning=_verification_warning(result.verification), finished_at=now)
+    try:
+        _cp.mark_complete(db, drive_id)  # a done drive always runs clean next time
+    except Exception:  # bookkeeping only
+        logger.exception("could not mark the run of drive %s complete", drive_id)
     result.status, result.stage = STATUS_DONE, STAGE_DONE
     logger.info("pipeline done for drive %s: %d candidates, %d accepted, %d hazards", drive_id,
                 result.verification.candidate_count, result.verification.accepted_count,
                 result.dedup.hazard_count)
     return result
+
+
+def _provider_name(provider: Any) -> str:
+    """The provider's name for the run fingerprint, without creating a provider that was not given."""
+    if provider is not None:
+        return str(getattr(provider, "name", None) or type(provider).__name__)
+    return config.provider_name()
+
+
+def _reuse_aggregation(db: Path, drive_id: str, plan: dict[str, Any] | None, detection: DetectionSummary,
+                       min_frames: int) -> AggregationSummary | None:
+    """Resume: the earlier aggregation's summary when its stage is recorded complete, the detections it used
+    are unchanged, the minimum track length is the same and its candidate images still exist. Else None
+    (the stage runs again; it is deterministic and free)."""
+    info = (plan or {}).get("stages", {}).get(STAGE_AGGREGATING)
+    if not isinstance(info, dict) or info.get("min_frames") != min_frames:
+        return None
+    if info.get("signature") != _cp.detections_signature(drive_id, db):
+        return None
+    candidates = load_candidates(drive_id, db_path=db)
+    if len(candidates) != info.get("candidate_count"):
+        return None
+    if any(not c.get("best_frame_path") or not Path(c["best_frame_path"]).is_file() for c in candidates):
+        return None
+    return AggregationSummary(
+        drive_id=drive_id,
+        min_frames=min_frames,
+        detection_count=int(info.get("detection_count", detection.detection_count)),
+        track_count=int(info.get("track_count", 0)),
+        dropped_track_count=int(info.get("dropped_track_count", 0)),
+        candidate_count=len(candidates),
+        geotagged_count=sum(1 for c in candidates if c["geotag_status"] == GEOTAG_OK),
+        candidates=candidates,
+    )
+
+
+def _resume_stage(db: Path, drive_id: str, plan: dict[str, Any], min_frames: int | None) -> str:
+    """The first stage of a resumed run that still has work to do (the ``resumed_from`` of the drive)."""
+    stages = plan["stages"]
+    for name in STAGES:
+        info = stages.get(name)
+        if info is None or name in (STAGE_BLURRING, STAGE_DEDUPLICATING, STAGE_CHECKING_FIXES):
+            # the last three re-run in full on every resume, so they are where a run resumes at
+            return name
+        if name == STAGE_AGGREGATING:
+            try:
+                wanted = min_frames if min_frames is not None else config.min_track_frames()
+            except ValueError:
+                return name
+            if info.get("min_frames") != wanted or info.get("signature") != _cp.detections_signature(drive_id, db):
+                return name
+        if name == STAGE_VERIFYING and info.get("skipped"):
+            return name
+    return STAGE_CHECKING_FIXES
 
 
 def _verification_warning(summary: VerificationSummary | None) -> str | None:

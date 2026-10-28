@@ -74,6 +74,39 @@ DRIVES_WARNING_COLUMNS = {
     "warning": "TEXT",
 }
 
+# Columns added to drives for resumable runs (task 26c), same idempotent migration.
+#   resumed       1 when the latest run resumed earlier work (checkpoints), else 0 (shown as a bool)
+#   resumed_from  the first stage that still had work to do in that run; NULL when not resumed
+DRIVES_RESUME_COLUMNS = {
+    "resumed": "INTEGER DEFAULT 0",
+    "resumed_from": "TEXT",
+}
+
+# Checkpoints of the pipeline (task 26c, written by backend/checkpoints.py and the stages).
+# pipeline_runs: one row per drive, the latest run. fingerprint = hash of the settings that decide
+# whether earlier work can be reused; complete = 1 once the run finished (done); stages = JSON
+# {stage name: info dict} of the stages that completed. detection_chunks: one row per chunk whose
+# detections are committed (written in the same transaction as the chunk's detection rows), with the
+# per-chunk numbers the detection summary needs. Both are removed by clear_results.
+PIPELINE_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    drive_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    complete INTEGER NOT NULL DEFAULT 0,
+    stages TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT
+)
+"""
+DETECTION_CHUNKS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS detection_chunks (
+    drive_id TEXT NOT NULL,
+    chunk INTEGER NOT NULL,
+    frames INTEGER NOT NULL DEFAULT 0,
+    dropped INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (drive_id, chunk)
+)
+"""
+
 
 # Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
 # frame_index is the global frame index and frame_timestamp the global time in seconds from the
@@ -329,6 +362,9 @@ def init_db(path: Path | str | None = None) -> Path:
         _add_missing_columns(conn, "drives", DRIVES_STATIONARY_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_VIDEO_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_WARNING_COLUMNS)
+        _add_missing_columns(conn, "drives", DRIVES_RESUME_COLUMNS)
+        conn.execute(PIPELINE_RUNS_SCHEMA)
+        conn.execute(DETECTION_CHUNKS_SCHEMA)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)

@@ -326,3 +326,36 @@ def preprocess_video(
         chunk_frames=chunk_frames,
         output_dir=out,
     )
+
+
+def load_preprocess_result(output_dir) -> PreprocessResult | None:
+    """Rebuild the ``PreprocessResult`` of an earlier ``preprocess_video`` run from its output folder
+    (task 26c, used to resume a drive), or None when the folder is not complete: no readable
+    ``frame_timestamps.json``, or a chunk file it lists is missing. Runs no ffmpeg."""
+    out = Path(output_dir)
+    ts_path = out / TIMESTAMPS_FILENAME
+    try:
+        doc = json.loads(ts_path.read_text(encoding="utf-8"))
+        chunks = []
+        for c in doc["chunks"]:
+            path = out / str(c["file"])
+            if not path.is_file():
+                return None
+            chunks.append(Chunk(int(c["index"]), path.resolve(), int(c["start_frame"]), int(c["frame_count"]),
+                                float(c["start_time"]), float(c["end_time"])))
+        if not chunks:
+            return None
+        return PreprocessResult(
+            chunks=chunks,
+            frame_timestamps_path=ts_path.resolve(),
+            fps=float(doc["fps"]),
+            width=int(doc["width"]),
+            height=int(doc["height"]),
+            duration_seconds=float(doc["duration_seconds"]),
+            frame_count=int(doc["frame_count"]),
+            chunk_seconds=float(doc["chunk_seconds"]),
+            chunk_frames=int(doc["chunk_frames"]),
+            output_dir=out.resolve(),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None

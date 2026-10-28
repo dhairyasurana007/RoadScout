@@ -71,6 +71,15 @@ Rules:
   provider errors (any other ``ProviderError``), malformed verdicts and failures building the image set
   still abort. Outage guard: 3 skips in a row (a success resets the count), or every candidate skipped,
   raises ``VerificationError`` and stores nothing.
+- Resuming (task 26c, ``resume=True``; the pipeline always passes it): each verdict is committed on its own
+  as soon as it is obtained, nothing is deleted up front except verdicts that no longer count, and
+  candidates that already have a verdict with the same prompt version (and the same model when the
+  provider names one, ``provider.verify_model``) are NOT sent to the provider again. A run where every
+  candidate already has a verdict makes zero provider calls. ``accepted`` of kept verdicts is recomputed
+  for the current ``min_confidence``. When the run stops (provider error, malformed verdict, outage guard)
+  the verdicts committed before the stop stay; candidates skipped for network failures still get no
+  verdict. The summary then covers every stored verdict of the drive (earlier and new).
+  Without ``resume`` the drive's verdicts are replaced in one transaction as described above.
 - No candidates (or an unknown drive) means success with an empty summary: no provider call, no write.
 - Bad arguments (blank ``drive_id``, bad ``min_confidence``) raise ``ValueError`` before any work.
 - Unblurred frames leave the machine here (the one accepted exception, see the README); no keys
@@ -262,6 +271,47 @@ def _resolve_min_confidence(value: float | None) -> float:
     return float(value)
 
 
+def _prepare_resume(drive_id: str, target: Path, candidates: list[dict[str, Any]], provider: Any,
+                    prompt: VerificationPrompt, threshold: float) -> set[int]:
+    """Resume: the candidate ids that already have a verdict from the same model and prompt version.
+
+    Verdict rows of any other candidate (an older prompt version or another model) are removed first, so a
+    candidate that cannot be verified now has no verdict. ``accepted`` of the kept verdicts is recomputed
+    for ``threshold``. The model is compared only when the provider names one (``verify_model``, as the
+    live provider does); the provider itself is fixed by the run's fingerprint."""
+    wanted = getattr(provider, "verify_model", None)
+    wanted = wanted if isinstance(wanted, str) and wanted else None
+    ids = {c["id"] for c in candidates}
+    conn = get_connection(target)
+    try:
+        with conn:
+            valid: set[int] = set()
+            for r in conn.execute("SELECT candidate_id, model, prompt_version FROM verdicts WHERE drive_id = ?",
+                                  (drive_id,)).fetchall():
+                if (r["candidate_id"] in ids and r["prompt_version"] == prompt.version
+                        and (wanted is None or r["model"] == wanted)):
+                    valid.add(r["candidate_id"])
+                else:
+                    conn.execute("DELETE FROM verdicts WHERE candidate_id = ?", (r["candidate_id"],))
+            conn.execute(
+                "UPDATE verdicts SET accepted = CASE WHEN is_hazard = 1 AND confidence >= ? THEN 1 ELSE 0 END "
+                "WHERE drive_id = ?", (threshold, drive_id))
+        return valid
+    finally:
+        conn.close()
+
+
+def _store_verdict(target: Path, row: dict[str, Any]) -> None:
+    """Commit one verdict row on its own (replacing any row the candidate had)."""
+    conn = get_connection(target)
+    try:
+        with conn:
+            conn.execute("DELETE FROM verdicts WHERE candidate_id = ?", (row["candidate_id"],))
+            conn.execute(_INSERT, row)
+    finally:
+        conn.close()
+
+
 # ----- main --------------------------------------------------------------------------------
 
 
@@ -274,8 +324,13 @@ def verify_drive(
     db_path: str | Path | None = None,
     prompt: VerificationPrompt | str | Path | None = None,
     prompts: HazardPrompts | None = None,
+    resume: bool = False,
 ) -> VerificationSummary:
-    """Verify every candidate of a drive with Muse Spark and store the verdicts. See the module docstring."""
+    """Verify every candidate of a drive with Muse Spark and store the verdicts. See the module docstring.
+
+    ``resume=True`` stores each verdict (its own commit) as soon as it is obtained and skips candidates
+    that already have a verdict from the same model and prompt version (see "Resuming" in the module
+    docstring). The default replaces the drive's verdicts in one transaction at the end."""
     if drive_id is None or not str(drive_id).strip():
         raise ValueError("drive_id must not be blank")
     drive_id = str(drive_id).strip()
@@ -300,11 +355,16 @@ def verify_drive(
     send_text = _accepts_prompt_text(provider)
     now = datetime.now(timezone.utc).isoformat()
 
+    kept_note = "earlier verdicts were kept" if resume else "nothing was stored"
+    already: set[int] = _prepare_resume(drive_id, target, candidates, provider, prompt, threshold) if resume else set()
+
     rows: list[dict[str, Any]] = []
     failed_ids: list[int] = []
     in_a_row = 0
     for cand in candidates:
         cid = cand["id"]
+        if cid in already:  # verified by an earlier run: no provider call
+            continue
         skipped: Exception | None = None
         raw: Any = None
         try:
@@ -318,7 +378,7 @@ def verify_drive(
                 skipped = e
         except Exception as e:
             raise VerificationError(
-                f"verification failed for candidate {cid} of drive {drive_id}; nothing was stored: "
+                f"verification failed for candidate {cid} of drive {drive_id}; {kept_note}: "
                 f"{type(e).__name__}: {e}", candidate_id=cid, drive_id=drive_id,
             ) from e
         if skipped is not None:
@@ -329,7 +389,7 @@ def verify_drive(
             if in_a_row >= MAX_CONSECUTIVE_SKIPS:
                 raise VerificationError(
                     f"verification gave up on drive {drive_id} after {in_a_row} candidates in a row failed "
-                    f"({type(skipped).__name__}: network or service unavailable); nothing was stored",
+                    f"({type(skipped).__name__}: network or service unavailable); {kept_note}",
                     candidate_id=cid, drive_id=drive_id,
                 ) from skipped
             continue
@@ -338,10 +398,10 @@ def verify_drive(
             verdict = _check_verdict(raw, classes)
         except ValueError as e:
             raise VerificationError(
-                f"malformed verdict for candidate {cid} of drive {drive_id}; nothing was stored: {e}",
+                f"malformed verdict for candidate {cid} of drive {drive_id}; {kept_note}: {e}",
                 candidate_id=cid, drive_id=drive_id,
             ) from e
-        rows.append({
+        row = {
             "candidate_id": cid,
             "drive_id": drive_id,
             "is_hazard": int(verdict.is_hazard),
@@ -355,31 +415,36 @@ def verify_drive(
             "prompt_version": prompt.version,
             "accepted": int(verdict.is_hazard and verdict.confidence >= threshold),
             "created_at": now,
-        })
+        }
+        rows.append(row)
+        if resume:  # committed now, so an interruption keeps every verdict obtained so far
+            _store_verdict(target, row)
 
-    if failed_ids and not rows:
+    if failed_ids and not rows and not already:
         raise VerificationError(
             f"verification failed for every candidate of drive {drive_id} ({len(failed_ids)}: network or "
-            f"service unavailable); nothing was stored", candidate_id=failed_ids[-1], drive_id=drive_id,
+            f"service unavailable); {kept_note}", candidate_id=failed_ids[-1], drive_id=drive_id,
         )
 
-    conn = get_connection(target)
-    try:
-        with conn:  # one transaction: commit on success, roll back on any error
-            conn.execute("DELETE FROM verdicts WHERE drive_id = ?", (drive_id,))
-            conn.executemany(_INSERT, rows)
-    finally:
-        conn.close()
+    if not resume:
+        conn = get_connection(target)
+        try:
+            with conn:  # one transaction: commit on success, roll back on any error
+                conn.execute("DELETE FROM verdicts WHERE drive_id = ?", (drive_id,))
+                conn.executemany(_INSERT, rows)
+        finally:
+            conn.close()
 
-    accepted = sum(r["accepted"] for r in rows)
+    stored = load_verdicts(drive_id, db_path=target)
+    accepted = sum(1 for v in stored if v["accepted"])
     summary = VerificationSummary(
         drive_id=drive_id,
         min_confidence=threshold,
         prompt_version=prompt.version,
-        candidate_count=len(rows),
+        candidate_count=len(stored),
         accepted_count=accepted,
-        rejected_count=len(rows) - accepted,
-        verdicts=load_verdicts(drive_id, db_path=target),
+        rejected_count=len(stored) - accepted,
+        verdicts=stored,
         failed_candidate_ids=failed_ids,
     )
     logger.info("verification for drive %s: %d candidates, %d accepted, %d skipped (min_confidence %s, prompt %s)",

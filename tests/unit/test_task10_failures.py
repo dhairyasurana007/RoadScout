@@ -36,7 +36,10 @@ def test_detection_error_marks_failed_with_stage_and_message(rs10_env):
     p = spy(fail_detect_on=1)
     e.run(did, p)  # may raise or return; the recorded state is what matters
     assert_failed(e, did, "boom-detect-xyz", any_of=("detect",))
-    assert e.counts(did) == ZERO, "a failed detection stage leaves no detections, candidates or verdicts"
+    # task 26c: the chunk that finished before the failure stays stored (chunk 0 of 3 = 1/3 of the detections)
+    c = e.counts(did)
+    assert c["detections"] == DETECTIONS // CHUNKS, "the chunks before the failing one are kept"
+    assert c["candidates"] == 0 and c["verdicts"] == 0 and c["all_verdicts"] == 0
     assert p.verify_calls == [], "later stages must not run after a failure"
     assert e.video_file(did).is_file()
 
@@ -48,7 +51,8 @@ def test_verification_error_marks_failed(rs10_env):
     e.run(did, p)
     assert_failed(e, did, "boom-verify-xyz", any_of=("verif",))
     c = e.counts(did)
-    assert c["verdicts"] == 0 and c["all_verdicts"] == 0, "no partial verdicts"
+    # task 26c: verdicts obtained before the failure are kept (the failing call was the second one)
+    assert c["verdicts"] == 1 and c["all_verdicts"] == 1, "the earlier verdict is kept"
     assert c["candidates"] in (0, CHUNKS)
     assert e.orphan_verdicts() == []
     # whatever earlier-stage data remains is usable

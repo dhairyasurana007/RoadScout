@@ -317,7 +317,7 @@ def test_permanent_provider_error_still_fails_the_drive(rs10_env):
     assert status_of(d) in FAILED
     assert "402" in (d.get("error") or "")
     assert warning_of(d) is None
-    assert e.counts(did)["all_verdicts"] == 0
+    assert e.counts(did)["all_verdicts"] == 1, "task 26c: the verdict obtained before the abort stays stored"
 
 
 def test_spend_cap_error_still_fails_the_drive(rs10_env):
@@ -333,7 +333,7 @@ def test_spend_cap_error_still_fails_the_drive(rs10_env):
     e.run(did, spy(on_verify=hook))
     d = e.get(did)
     assert status_of(d) in FAILED
-    assert e.counts(did)["all_verdicts"] == 0
+    assert e.counts(did)["all_verdicts"] == 1, "task 26c: the verdict obtained before the abort stays stored"
 
 
 def test_pipeline_result_carries_the_skipped_ids_when_it_exposes_the_summary(rs10_env):

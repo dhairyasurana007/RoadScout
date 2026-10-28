@@ -55,6 +55,9 @@ def _row_to_drive(row) -> dict:
     drive["started_at_fell_back"] = drive["started_at_source"] != SOURCE_VIDEO_METADATA
     # video_path stays the stored key; these say whether the raw video is gone (Delete video, task 15)
     drive["video_deleted"] = bool(drive.get("video_deleted_at"))
+    # resumed / resumed_from: the latest run picked up an earlier interrupted run's work (task 26c)
+    drive["resumed"] = bool(drive.get("resumed"))
+    drive["resumed_from"] = drive.get("resumed_from") or None
     return drive
 
 
@@ -123,6 +126,7 @@ def get_pipeline_provider() -> ModelProvider | None:
 def process_drive(
     drive_id: str,
     background_tasks: BackgroundTasks,
+    restart: bool = False,
     storage: Storage = Depends(get_storage),
     provider: ModelProvider | None = Depends(get_pipeline_provider),
 ) -> dict:
@@ -131,8 +135,10 @@ def process_drive(
 
     Returns 202 with the drive record (status processing, stage queued) straight away; poll
     GET /api/drives/{id} for progress. 404 for an unknown drive, 409 if it is already processing
-    and 409 if its raw video was deleted. A finished or failed drive can be processed again; its
-    results are replaced.
+    and 409 if its raw video was deleted. A finished drive is processed again from scratch and its
+    results are replaced. A failed drive (including one interrupted by a server restart) RESUMES
+    where it stopped when its settings are unchanged (the drive JSON shows ``resumed`` and
+    ``resumed_from``); ``?restart=true`` forces a clean start instead.
     """
     try:
         row = claim_drive(drive_id)
@@ -144,7 +150,8 @@ def process_drive(
         ) from None
     except DriveBusyError:
         raise HTTPException(409, "Drive is already processing") from None
-    background_tasks.add_task(run_pipeline_in_background, drive_id, storage=storage, provider=provider)
+    extra = {"restart": True} if restart else {}  # keep the usual call shape when not restarting
+    background_tasks.add_task(run_pipeline_in_background, drive_id, storage=storage, provider=provider, **extra)
     return _row_to_drive(row)
 
 
