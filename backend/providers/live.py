@@ -44,7 +44,8 @@ ROADSCOUT_COST_PER_VERIFY_USD override them) and the estimate is what is charged
 The guard layer (``_call``): spend-cap check before the call, per-call timeout (scaled by
 the number of prompts for detect, which makes one request per prompt), retries with
 exponential backoff on transient errors and timeouts, and a charge plus cost-log line after
-success. A retry repeats the whole call (upload included).
+success. A retry repeats the whole call (upload included). Defaults: five attempts with waits of
+2, 4, 8 and 16 s between them (plus Retry-After), so a brief network outage is ridden out.
 """
 from __future__ import annotations
 
@@ -326,8 +327,8 @@ class LiveProvider(ModelProvider):
         api_key: str | None = None,
         *,
         tracker: SpendTracker | None = None,
-        max_attempts: int = 3,
-        base_delay: float = 0.5,
+        max_attempts: int = 5,
+        base_delay: float = 2.0,
         backoff: float = 2.0,
         timeout_seconds: float | None = 120.0,
         sleep: Callable[[float], None] = time.sleep,

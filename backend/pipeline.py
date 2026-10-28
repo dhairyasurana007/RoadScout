@@ -30,6 +30,10 @@ Drive status and stage (columns of the ``drives`` table, also keys of the drive 
             blurring, deduplicating, checking_fixes, done, failed
     error   NULL unless status is failed; then "<stage>: <message>" (see below)
     failed_stage  the stage that raised (preprocessing, ...), only when status is failed
+    warning NULL, or a plain-text line on a drive that finished done with a caveat: when verification
+            skipped candidates after network errors that outlived the retries (task 26b), for example
+            "2 of 84 candidates could not be verified because of network errors and were skipped;
+            process the drive again to retry them." Cleared when a run starts or results are cleared.
     updated_at    UTC ISO time of the last status or stage change
     finished_at   UTC ISO time the last run ended; NULL while running
 
@@ -256,7 +260,7 @@ def claim_drive(drive_id: str, *, db_path: str | Path | None = None) -> dict[str
     try:
         with conn:
             cur = conn.execute(
-                "UPDATE drives SET status = ?, stage = ?, error = NULL, failed_stage = NULL,"
+                "UPDATE drives SET status = ?, stage = ?, error = NULL, failed_stage = NULL, warning = NULL,"
                 " finished_at = NULL, updated_at = ? WHERE id = ? AND status != ? AND video_deleted_at IS NULL",
                 (STATUS_PROCESSING, STAGE_QUEUED, now, drive_id, STATUS_PROCESSING),
             )
@@ -310,6 +314,7 @@ def clear_results(drive_id: str, *, db_path: str | Path | None = None, work_dir:
             conn.execute("DELETE FROM verdicts WHERE drive_id = ?", (drive_id,))
             conn.execute("DELETE FROM candidates WHERE drive_id = ?", (drive_id,))
             conn.execute("DELETE FROM detections WHERE drive_id = ?", (drive_id,))
+            conn.execute("UPDATE drives SET warning = NULL WHERE id = ?", (drive_id,))
     finally:
         conn.close()
     if old:
@@ -468,12 +473,22 @@ def run_pipeline(
 
     now = _now()
     _update(db, drive_id, status=STATUS_DONE, stage=STAGE_DONE, error=None, failed_stage=None,
-            finished_at=now)
+            warning=_verification_warning(result.verification), finished_at=now)
     result.status, result.stage = STATUS_DONE, STAGE_DONE
     logger.info("pipeline done for drive %s: %d candidates, %d accepted, %d hazards", drive_id,
                 result.verification.candidate_count, result.verification.accepted_count,
                 result.dedup.hazard_count)
     return result
+
+
+def _verification_warning(summary: VerificationSummary | None) -> str | None:
+    """The drive's ``warning`` text when verification skipped candidates, else None. No paths or keys."""
+    failed = len(summary.failed_candidate_ids) if summary is not None else 0
+    if not failed:
+        return None
+    total = summary.candidate_count + failed
+    return (f"{failed} of {total} candidates could not be verified because of network errors and were "
+            f"skipped; process the drive again to retry them.")
 
 
 def _record_stationary_counts(db: Path, drive_id: str, detection: DetectionSummary) -> None:

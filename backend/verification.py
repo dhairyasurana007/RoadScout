@@ -61,10 +61,16 @@ Rules:
 
 - Idempotent per drive: the drive's old verdicts are replaced in ONE transaction (other drives
   are untouched).
-- All-or-nothing: every candidate is verified in memory first. If the provider raises for any
-  candidate, or returns something malformed, ``VerificationError`` (``candidate_id``, ``drive_id``;
-  the original error is ``__cause__``) is raised, nothing is written and the drive's earlier
-  verdicts stay as they were.
+- All-or-nothing, with one exception: every candidate is verified in memory first. If the provider
+  raises for any candidate, or returns something malformed, ``VerificationError`` (``candidate_id``,
+  ``drive_id``; the original error is ``__cause__``) is raised, nothing is written and the drive's
+  earlier verdicts stay as they were. The exception is a transient failure that outlived the
+  provider's retries (``RetriesExhausted`` or ``ProviderTimeoutError``): that candidate is skipped (no
+  verdict row, never accepted, logged by id and exception type only) and the loop goes on. The
+  summary lists the skipped ids in ``failed_candidate_ids``. Spend-cap errors, missing config, permanent
+  provider errors (any other ``ProviderError``), malformed verdicts and failures building the image set
+  still abort. Outage guard: 3 skips in a row (a success resets the count), or every candidate skipped,
+  raises ``VerificationError`` and stores nothing.
 - No candidates (or an unknown drive) means success with an empty summary: no provider call, no write.
 - Bad arguments (blank ``drive_id``, bad ``min_confidence``) raise ``ValueError`` before any work.
 - Unblurred frames leave the machine here (the one accepted exception, see the README); no keys
@@ -88,12 +94,25 @@ from .candidates import load_candidates
 from .db import get_connection, init_db
 from .detection import _normalise_chunks
 from .hazard_prompts import HazardPrompts, load_hazard_prompts
-from .providers import ModelProvider, ProviderError, Verdict, get_provider
+from .providers import (
+    ModelProvider,
+    ProviderError,
+    ProviderTimeoutError,
+    RetriesExhausted,
+    Verdict,
+    get_provider,
+)
 from .verification_prompt import VerificationPrompt, load_verification_prompt
 
 logger = logging.getLogger(__name__)
 
 JPEG_QUALITY = 90
+
+#: Transient failures in a row (a success resets the count) after which verification gives up.
+MAX_CONSECUTIVE_SKIPS = 3
+
+#: Provider errors that mean "the network or service was unavailable": that candidate is skipped.
+SKIPPABLE_ERRORS = (RetriesExhausted, ProviderTimeoutError)
 
 _INSERT = (
     "INSERT INTO verdicts (candidate_id, drive_id, is_hazard, hazard_class, severity, lane, "
@@ -123,6 +142,9 @@ class VerificationSummary:
     accepted_count: int
     rejected_count: int
     verdicts: list[dict[str, Any]] = field(default_factory=list)  # as load_verdicts returns
+    # Candidates skipped after a transient failure (network, timeout) that outlived the retries, in
+    # candidate order. The four counts and ``verdicts`` above cover the verified candidates only.
+    failed_candidate_ids: list[int] = field(default_factory=list)
 
 
 # ----- helpers -----------------------------------------------------------------------------
@@ -279,19 +301,39 @@ def verify_drive(
     now = datetime.now(timezone.utc).isoformat()
 
     rows: list[dict[str, Any]] = []
+    failed_ids: list[int] = []
+    in_a_row = 0
     for cand in candidates:
         cid = cand["id"]
+        skipped: Exception | None = None
+        raw: Any = None
         try:
             images = _image_set(cand, infos)
             kwargs: dict[str, Any] = {"class_prompt": cand["hazard_class"], "prompt_version": prompt.version}
             if send_text:
                 kwargs["prompt_text"] = prompt.render(cand["hazard_class"], class_names)
-            raw = provider.verify(images, **kwargs)
+            try:
+                raw = provider.verify(images, **kwargs)
+            except SKIPPABLE_ERRORS as e:
+                skipped = e
         except Exception as e:
             raise VerificationError(
                 f"verification failed for candidate {cid} of drive {drive_id}; nothing was stored: "
                 f"{type(e).__name__}: {e}", candidate_id=cid, drive_id=drive_id,
             ) from e
+        if skipped is not None:
+            failed_ids.append(cid)
+            in_a_row += 1
+            logger.warning("candidate %s of drive %s could not be verified (%s); skipped",
+                           cid, drive_id, type(skipped).__name__)
+            if in_a_row >= MAX_CONSECUTIVE_SKIPS:
+                raise VerificationError(
+                    f"verification gave up on drive {drive_id} after {in_a_row} candidates in a row failed "
+                    f"({type(skipped).__name__}: network or service unavailable); nothing was stored",
+                    candidate_id=cid, drive_id=drive_id,
+                ) from skipped
+            continue
+        in_a_row = 0
         try:
             verdict = _check_verdict(raw, classes)
         except ValueError as e:
@@ -315,6 +357,12 @@ def verify_drive(
             "created_at": now,
         })
 
+    if failed_ids and not rows:
+        raise VerificationError(
+            f"verification failed for every candidate of drive {drive_id} ({len(failed_ids)}: network or "
+            f"service unavailable); nothing was stored", candidate_id=failed_ids[-1], drive_id=drive_id,
+        )
+
     conn = get_connection(target)
     try:
         with conn:  # one transaction: commit on success, roll back on any error
@@ -332,9 +380,10 @@ def verify_drive(
         accepted_count=accepted,
         rejected_count=len(rows) - accepted,
         verdicts=load_verdicts(drive_id, db_path=target),
+        failed_candidate_ids=failed_ids,
     )
-    logger.info("verification for drive %s: %d candidates, %d accepted (min_confidence %s, prompt %s)",
-                drive_id, summary.candidate_count, accepted, threshold, prompt.version)
+    logger.info("verification for drive %s: %d candidates, %d accepted, %d skipped (min_confidence %s, prompt %s)",
+                drive_id, summary.candidate_count, accepted, len(failed_ids), threshold, prompt.version)
     return summary
 
 

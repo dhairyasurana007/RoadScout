@@ -67,6 +67,13 @@ DRIVES_VIDEO_COLUMNS = {
     "video_deleted_at": "TEXT",
 }
 
+# Column added to drives for verification skips (task 26b), same idempotent migration.
+#   warning  NULL, or one plain-text line about a run that finished `done` but with a caveat (for
+#            example candidates skipped after network errors); cleared when a run starts
+DRIVES_WARNING_COLUMNS = {
+    "warning": "TEXT",
+}
+
 
 # Raw SAM 3.1 output, one row per detection (task 7, written by backend/detection.py).
 # frame_index is the global frame index and frame_timestamp the global time in seconds from the
@@ -321,6 +328,7 @@ def init_db(path: Path | str | None = None) -> Path:
         _add_missing_columns(conn, "drives", DRIVES_PIPELINE_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_STATIONARY_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_VIDEO_COLUMNS)
+        _add_missing_columns(conn, "drives", DRIVES_WARNING_COLUMNS)
         conn.execute(DETECTIONS_SCHEMA)
         conn.execute(DETECTIONS_INDEX)
         conn.execute(CANDIDATES_SCHEMA)

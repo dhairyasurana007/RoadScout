@@ -59,8 +59,9 @@ def test_bad_candidate_is_not_silently_stored_as_rejected(rs9_env):
     assert BAD_ID not in {r["candidate_id"] for r in e.rows()}
 
 
-ERRORS = ["ProviderError", "RetriesExhausted", "SpendCapExceeded", "TransientProviderError",
-          "ProviderTimeoutError", "RuntimeError", "ValueError"]
+# Task 26b: RetriesExhausted and ProviderTimeoutError (a transient failure that outlived the retries) no longer
+# abort the stage: that candidate is skipped (see test_task26b_verification.py). Everything else still aborts.
+ERRORS = ["ProviderError", "SpendCapExceeded", "TransientProviderError", "RuntimeError", "ValueError"]
 
 
 def make_error(kind):
