@@ -37,7 +37,7 @@ npm install
 npx playwright install chromium
 cd ..
 
-# Secrets: copy the template and fill in META_API_KEY (only needed from task 26)
+# Secrets: copy the template and fill in META_API_KEY (only needed for the live provider)
 Copy-Item .env.example .env
 ```
 
@@ -90,7 +90,7 @@ One ffmpeg pass applies rotation metadata, strips audio and all other non-video 
  "frames": [{"index": 0, "chunk": 0, "frame_in_chunk": 0, "timestamp": 0.0, "chunk_timestamp": 0.0}]}
 ```
 
-The result has `chunks` (index, path, start_frame, frame_count, start_time, end_time), `frame_timestamps_path`, `fps`, `width`, `height`, `duration_seconds` and `frame_count`. Defaults can be set with `ROADSCOUT_PREPROCESS_FPS` (3), `ROADSCOUT_CHUNK_SECONDS` (10) and `ROADSCOUT_PREPROCESS_MAX_HEIGHT` (720). Bad input raises `InvalidMedia`, a missing ffmpeg raises `FfmpegUnavailable`, and an ffmpeg failure raises `PreprocessError`. The full format is documented in the module docstring.
+The result has `chunks` (index, path, start_frame, frame_count, start_time, end_time), `frame_timestamps_path`, `fps`, `width`, `height`, `duration_seconds` and `frame_count`. Defaults can be set with `ROADSCOUT_PREPROCESS_FPS` (3), `ROADSCOUT_CHUNK_SECONDS` (20) and `ROADSCOUT_PREPROCESS_MAX_HEIGHT` (720). Bad input raises `InvalidMedia`, a missing ffmpeg raises `FfmpegUnavailable`, and an ffmpeg failure raises `PreprocessError`. The full format is documented in the module docstring.
 
 ## GPX position lookup
 
@@ -178,7 +178,7 @@ hazards = load_accepted_candidates("drive-1")             # accepted candidates,
 `verify_drive(drive_id, *, chunks=None, provider=None, min_confidence=None, db_path=None, prompt=None, prompts=None)`:
 
 - **Images per candidate** (in this order): the best frame, the crop (left out if there is none), and the frames just before and after the best frame cut from the chunk video (needs `chunks`; a neighbour that does not exist is skipped). Unblurred frames are sent to Muse Spark here; this is the one place they leave your machine.
-- **Prompt**: `config/verification_prompt.json` (override the path with `ROADSCOUT_VERIFY_PROMPT`) holds `{"version", "prompt", "schema"}`. The `prompt` may use `{detector_class}`, `{classes}` and `{schema}` placeholders. It is passed to the provider as `verify(images, class_prompt=<detector class>, prompt_version=<version>, prompt_text=<prompt>)`. The wording and request shape are placeholders until task 26. Change `version` whenever the prompt changes: it is stored on every verdict.
+- **Prompt**: `config/verification_prompt.json` (override the path with `ROADSCOUT_VERIFY_PROMPT`) holds `{"version", "prompt", "schema"}`. The `prompt` may use `{detector_class}`, `{classes}` and `{schema}` placeholders. It is passed to the provider as `verify(images, class_prompt=<detector class>, prompt_version=<version>, prompt_text=<prompt>)`. The live provider sends it to Muse Spark with the schema as a JSON-schema response format (see "Live provider"). Change `version` whenever the prompt changes: it is stored on every verdict.
 - **Verdict**: `is_hazard`, `class`, `severity` (1 to 3, 0 only for a non-hazard), `lane`, `confidence` (0 to 1), `reason`, `report_description`. A malformed answer (not a verdict, bad severity or confidence, a class not in `config/hazard_prompts.json`) raises `VerificationError` naming the candidate id.
 - **Accepted** means `is_hazard and confidence >= min_confidence` (default 0.5; set `ROADSCOUT_VERIFY_MIN_CONFIDENCE` or pass `min_confidence`). Rejected verdicts are stored too, for the eval ablation.
 - **Table `verdicts`**: `candidate_id` (primary key, deleted with its candidate), `drive_id`, `is_hazard`, `hazard_class`, `severity`, `lane`, `confidence`, `reason`, `report_description`, `model`, `prompt_version`, `accepted`, `created_at`.
@@ -394,3 +394,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
 - `docs/architecture-plan.md` the plan; `scripts/preflight.py` environment checks
+
+## Live provider (task 26)
+
+`ROADSCOUT_PROVIDER=live` (needs `META_API_KEY`) calls Meta's Model API: SAM 3.1 for detection and the privacy blur, Muse Spark for verification. Detection uploads the chunk once, sends one request per prompt phrase and deletes the upload afterwards; verification is one request with up to 50 images. Nothing leaves your machine except those calls, and CI never makes them (it runs on the fake provider). Settings: `ROADSCOUT_META_BASE_URL` (default `https://api.meta.ai/v1`), `ROADSCOUT_SAM_MODEL` (`sam-3.1`), `ROADSCOUT_VERIFY_MODEL` (`muse-spark-1.3`). The spend cap check runs before every call, using estimates of $0.012 per detect prompt and $0.007 per verification (override with `ROADSCOUT_COST_PER_DETECT_USD` / `ROADSCOUT_COST_PER_VERIFY_USD`). SAM bills at least 50 frames per request, so chunks default to 20 s (60 frames at 3 fps). Rate limits and 5xx errors are retried (honouring `Retry-After` up to 30 s); other errors are not. To record fixtures from one real chunk (manual, spends a few cents): `ROADSCOUT_PROVIDER=live python scripts/record_fixtures.py CHUNK_VIDEO OUT_DIR`.

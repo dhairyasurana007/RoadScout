@@ -9,6 +9,9 @@ from .errors import ProviderTimeoutError, RetriesExhausted, TransientProviderErr
 
 T = TypeVar("T")
 
+#: Longest wait honoured from a server's Retry-After hint.
+MAX_RETRY_AFTER_SECONDS = 30.0
+
 
 def call_with_timeout(fn: Callable[[], T], timeout_seconds: float | None) -> T:
     """Run ``fn()`` and return its result.
@@ -50,7 +53,8 @@ def call_with_retries(
     """Call ``fn()`` (no arguments), retrying errors in ``retry_on``.
 
     Waits ``base_delay * backoff**(n-1)`` seconds (via ``sleep``) after failed attempt
-    ``n``; never sleeps after the last attempt. Errors outside ``retry_on``
+    ``n`` (at least the error's ``retry_after`` seconds when it has one, capped at 30);
+    never sleeps after the last attempt. Errors outside ``retry_on``
     (including SpendCapExceeded) propagate immediately. When ``max_attempts`` are used
     up it raises ``RetriesExhausted`` (a ``ProviderError``) carrying the last
     error's message.
@@ -65,5 +69,9 @@ def call_with_retries(
                 raise RetriesExhausted(
                     f"gave up after {attempt} attempts: {e}", attempts=attempt
                 ) from e
-            sleep(base_delay * backoff ** (attempt - 1))
+            delay = base_delay * backoff ** (attempt - 1)
+            hint = getattr(e, "retry_after", None)  # a server's Retry-After, capped
+            if isinstance(hint, (int, float)) and hint > 0:
+                delay = max(delay, min(float(hint), MAX_RETRY_AFTER_SECONDS))
+            sleep(delay)
     raise AssertionError("unreachable")

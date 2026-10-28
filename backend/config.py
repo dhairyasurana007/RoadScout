@@ -28,7 +28,7 @@ def meta_api_key() -> str | None:
 
 DEFAULT_PREPROCESS_FPS = 3.0
 DEFAULT_PREPROCESS_MAX_HEIGHT = 720
-DEFAULT_CHUNK_SECONDS = 10.0
+DEFAULT_CHUNK_SECONDS = 20.0  # SAM 3.1 bills at least 50 frames per request: 20 s at 3 fps is 60
 
 
 def _positive_number(name: str, default: float) -> float:
@@ -55,7 +55,7 @@ def preprocess_max_height() -> int:
 
 
 def chunk_seconds() -> float:
-    """Target chunk length in seconds. Set ROADSCOUT_CHUNK_SECONDS (default 10)."""
+    """Target chunk length in seconds. Set ROADSCOUT_CHUNK_SECONDS (default 20)."""
     return _positive_number("ROADSCOUT_CHUNK_SECONDS", DEFAULT_CHUNK_SECONDS)
 
 

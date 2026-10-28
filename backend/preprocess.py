@@ -212,7 +212,7 @@ def preprocess_video(
     """Normalize `input_path` into chunks under `output_dir`. See the module docstring.
 
     `height` is the maximum output height (`max_height` is an alias). Defaults (None) come
-    from config: ROADSCOUT_PREPROCESS_FPS (3), ROADSCOUT_CHUNK_SECONDS (10) and
+    from config: ROADSCOUT_PREPROCESS_FPS (3), ROADSCOUT_CHUNK_SECONDS (20) and
     ROADSCOUT_PREPROCESS_MAX_HEIGHT (720).
     """
     if height is not None and max_height is not None and height != max_height:

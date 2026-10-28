@@ -106,25 +106,32 @@ def test_live_without_key_fails_clearly_naming_the_variable(clip, frame_image):
             pytest.fail(f"live {call} without a key must fail")
 
 
-def test_live_is_a_placeholder_even_with_a_key_and_makes_no_network_call(
-        monkeypatch, clip, frame_image, no_network):
+def test_live_with_a_key_only_talks_through_the_injected_client(monkeypatch, clip, frame_image, no_network):
+    """Task 26 replaced the placeholder: with a key the live provider issues real HTTP calls, so here
+    they go through an httpx.MockTransport that answers 401. The error must be a ProviderError, must
+    never hold the key, and no real network connection may be opened."""
+    import httpx
+
     fake_key = "dummy-key-for-tests-0000"
     monkeypatch.setenv("META_API_KEY", fake_key)
     monkeypatch.setattr("time.sleep", lambda s: None)
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(401, json={"error": {"message": "invalid credentials", "type": "auth", "code": "x"}})
+
     for call in ("detect", "verify"):
-        try:
-            p = find("LiveProvider")()
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        p = find("LiveProvider")(client=client)
+        with pytest.raises(find("ProviderError")) as ei:
             if call == "detect":
                 p.detect(clip, PROMPTS)
             else:
-                p.verify([frame_image])
-        except Exception as e:  # noqa: BLE001
-            msg = str(e)
-            assert fake_key not in msg, "the key must never appear in an error message"
-            assert re.search(r"placeholder|not implemented|task 26", msg, re.I), (
-                "placeholder error should say it is not implemented until task 26")
-        else:
-            pytest.fail("placeholder live provider must raise")
+                p.verify([frame_image], prompt_text="check")
+        assert fake_key not in str(ei.value)
+        assert "placeholder" not in str(ei.value).lower()
+    assert seen, "the live provider must use the injected client"
     assert no_network == []
 
 

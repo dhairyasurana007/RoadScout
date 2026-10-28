@@ -23,6 +23,7 @@ class VideoInfo:
     width: int | None
     height: int | None
     stream_index: int | None = None  # ffprobe index of the main video stream (skips cover art)
+    fps: float | None = None  # avg_frame_rate of the main video stream, else r_frame_rate; None if unknown
 
 
 @dataclass
@@ -47,6 +48,20 @@ def parse_time(value: str | None) -> datetime | None:
 def _tag(tags: dict | None, name: str) -> str | None:
     for key, value in (tags or {}).items():
         if key.lower() == name:
+            return value
+    return None
+
+
+def _frame_rate(stream: dict) -> float | None:
+    """Frame rate from ffprobe's "num/den" strings: avg_frame_rate, falling back to r_frame_rate."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        raw = stream.get(key)
+        try:
+            num, _, den = str(raw).partition("/")
+            value = float(num) / float(den or 1)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if value > 0 and value != float("inf"):
             return value
     return None
 
@@ -106,6 +121,7 @@ def probe_video(path: Path) -> VideoInfo:
         width=stream.get("width"),
         height=stream.get("height"),
         stream_index=stream.get("index"),
+        fps=_frame_rate(stream),
     )
 
 

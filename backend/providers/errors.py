@@ -14,7 +14,14 @@ class ProviderConfigError(ProviderError, ValueError):
 
 
 class TransientProviderError(ProviderError):
-    """A failure worth retrying: rate limit, 5xx, network blip."""
+    """A failure worth retrying: rate limit, 5xx, network blip.
+
+    ``retry_after`` (seconds, optional) is the server's Retry-After hint; the retry layer
+    waits at least that long (capped at 30 s) before the next attempt."""
+
+    def __init__(self, message: str = "", retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class ProviderTimeoutError(ProviderError):
