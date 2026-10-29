@@ -26,6 +26,15 @@ prompt index * 1000 + object id (ids from different phrases never collide), and 
 of all phrases for one frame form that frame's single ``FrameRecord``. Empty text means
 nothing found: an empty ``DetectionResult``.
 
+Images (task 26d): ``detect`` on a file that is an image (JPEG or PNG, decided by its magic bytes, the
+extension only as a fallback) is not uploaded and not sent as video. The privacy blur uses this. Each
+prompt gets one ``POST /responses`` whose media part is ``{"type": "input_image", "image_url":
+"data:<mime>;base64,..."}``, with the same model, metadata and parsing as video; the result has at most
+one frame (``frame_index`` 0, ``timestamp`` 0.0, no ffprobe). No ``/files`` call is made. An image over
+50,000,000 bytes, an empty one or an unreadable one raises ``ProviderError`` before any request. The
+estimate is $0.0025 per prompt (SAM image pricing) unless ROADSCOUT_COST_PER_DETECT_USD is set, which
+still wins and stays per prompt. Errors, retries and key redaction are the same as for video.
+
 Verification (``_do_verify``): one ``POST /responses`` to Muse Spark with the prompt and one
 ``input_image`` data URL per image (at most 50), asking for a JSON reply in the verdict
 schema. The reply (Markdown fences tolerated) becomes a ``Verdict``; anything that does not
@@ -90,7 +99,10 @@ DEFAULT_BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_SAM_MODEL = "sam-3.1"
 DEFAULT_VERIFY_MODEL = "muse-spark-1.3"
 
-DEFAULT_COST_USD = {"detect": 0.012, "verify": 0.007}  # detect is per prompt
+# detect is per prompt; detect_image is SAM image pricing ($2.50 per 1,000 images) per prompt
+DEFAULT_COST_USD = {"detect": 0.012, "verify": 0.007, "detect_image": 0.0025}
+
+MAX_IMAGE_BYTES = 50_000_000  # largest image file sent to SAM
 
 MAX_VERIFY_IMAGES = 50
 DEFAULT_SCORE = 0.5
@@ -228,9 +240,11 @@ def _parse_record(oid: str, box_text: str, mask_text: str | None, prompt: str, p
         return None
 
 
-def _parse_detections(text: str, prompt: str, prompt_index: int, into: dict[int, list[Detection]]) -> None:
-    """Add every parsable record of one response text to ``into`` (frame index -> detections)."""
-    frame: int | None = None
+def _parse_detections(text: str, prompt: str, prompt_index: int, into: dict[int, list[Detection]],
+                      default_frame: int | None = None) -> None:
+    """Add every parsable record of one response text to ``into`` (frame index -> detections).
+    Records before any frame marker go to ``default_frame`` (None: they are skipped)."""
+    frame: int | None = default_frame
     for m in _TOKEN.finditer(text):
         if m.group("frame") is not None:
             frame = int(m.group("frame"))
@@ -244,6 +258,25 @@ def _parse_detections(text: str, prompt: str, prompt_index: int, into: dict[int,
 
 def _image_mime(data: bytes) -> str:
     return "image/png" if data.startswith(_PNG_MAGIC) else "image/jpeg"
+
+
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_EXTENSION_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+
+
+def _sniff_image_mime(path: Path) -> str | None:
+    """"image/jpeg" or "image/png" when the file is an image: decided by its magic bytes, with the
+    extension only as a fallback when the content matches neither. None for anything else (a video)."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(len(_PNG_MAGIC))
+    except OSError:
+        return None
+    if head.startswith(_JPEG_MAGIC):
+        return "image/jpeg"
+    if head.startswith(_PNG_MAGIC):
+        return "image/png"
+    return _EXTENSION_MIME.get(path.suffix.lower())
 
 
 def _json_object(text: str) -> Any:
@@ -370,10 +403,12 @@ class LiveProvider(ModelProvider):
         return (os.environ.get("ROADSCOUT_VERIFY_MODEL") or "").strip() or DEFAULT_VERIFY_MODEL
 
     def estimate_cost(self, operation: str) -> float:
-        """USD per verify call, or per detect prompt. The env variable wins when it is set."""
-        raw = os.environ.get(f"ROADSCOUT_COST_PER_{operation.upper()}_USD")
+        """USD per verify call, or per detect prompt ("detect_image": per prompt on one image, cheaper than
+        a video chunk). ROADSCOUT_COST_PER_DETECT_USD / ROADSCOUT_COST_PER_VERIFY_USD win when set."""
+        env_operation = "detect" if operation == "detect_image" else operation
+        raw = os.environ.get(f"ROADSCOUT_COST_PER_{env_operation.upper()}_USD")
         if raw is not None and raw.strip():
-            return config.cost_per_call_usd(operation)
+            return config.cost_per_call_usd(env_operation)
         return DEFAULT_COST_USD.get(operation, 0.0)
 
     # --- guard layer ---------------------------------------------------------
@@ -511,6 +546,9 @@ class LiveProvider(ModelProvider):
         path = Path(video_path)
         if not path.is_file():
             raise ProviderError("the video chunk does not exist")
+        mime = _sniff_image_mime(path)
+        if mime is not None:
+            return self._detect_image(path, mime, phrases)
         fps = self._chunk_fps(video_path)
         per_prompt = self.estimate_cost("detect")
         self.tracker.check(per_prompt * len(phrases))  # before the upload
@@ -534,6 +572,37 @@ class LiveProvider(ModelProvider):
             FrameRecord(frame_index=n, timestamp=n / fps, detections=tuple(found[n]))
             for n in sorted(found)
         ]
+        return DetectionResult(frames=frames)
+
+    def _detect_image(self, path: Path, mime: str, phrases: list[str]) -> DetectionResult:
+        """SAM 3.1 on one image file (for example the privacy blur): the image goes inline as a data URL, one
+        request per phrase, no upload. Frame index 0, timestamp 0.0."""
+        try:
+            size = path.stat().st_size
+            if size > MAX_IMAGE_BYTES:
+                raise ProviderError(
+                    f"the image is {size} bytes; SAM accepts at most {MAX_IMAGE_BYTES} bytes per image")
+            data = path.read_bytes()
+        except OSError:
+            raise ProviderError("the image file could not be read") from None
+        if not data:
+            raise ProviderError("the image file is empty")
+        image_url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+        per_prompt = self.estimate_cost("detect_image")
+        found: dict[int, list[Detection]] = {}
+        for index, phrase in enumerate(phrases):
+            self.tracker.check(per_prompt * (index + 1))  # before each request
+            text = self._respond({
+                "model": self.sam_model,
+                "input": [{"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": phrase},
+                    {"type": "input_image", "image_url": image_url},
+                ]}],
+                "metadata": {"mask_encoding": "one_bit", "include_confidence": "true"},
+            })
+            _parse_detections(text, phrase, index, found, default_frame=0)
+        merged = [d for n in sorted(found) for d in found[n]]  # an image is one frame
+        frames = [FrameRecord(frame_index=0, timestamp=0.0, detections=tuple(merged))] if merged else []
         return DetectionResult(frames=frames)
 
     @staticmethod
@@ -589,10 +658,11 @@ class LiveProvider(ModelProvider):
             return DetectionResult()
         # one request per phrase, so the whole-call timeout and the estimate scale with their number
         timeout = None if self.timeout_seconds is None else self.timeout_seconds * len(phrases)
+        is_image = _sniff_image_mime(Path(video_path)) is not None and Path(video_path).is_file()
         return self._call(
             "detect",
             lambda: self._do_detect(video_path, phrases),
-            estimate=self.estimate_cost("detect") * len(phrases),
+            estimate=self.estimate_cost("detect_image" if is_image else "detect") * len(phrases),
             timeout=timeout,
         )
 
