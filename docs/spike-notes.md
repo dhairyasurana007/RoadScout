@@ -44,9 +44,28 @@ The number of matched frames barely moves with fps, so 2 fps costs a third less 
 - Minimum track length stays 3 frames: single and two-frame tracks dominate the false positives.
 - Frames, never the whole raw video: each 720p 3 fps chunk is about 1.6 MB per 20 s. The 15,000-frame cap per request means IMG_6508 must always be chunked.
 
+## Real-run findings (MVP exit check, 2026-10-28)
+
+Two drives with Google Maps Timeline on, converted to GPX with `spike/timeline_to_gpx.py` (Timeline gives about one point per minute, so positions are rough). Live provider, 20 s chunks, lean prompt set.
+
+| Drive | Length | Candidates | Verified hazards | Hazards after dedup |
+|---|---|---|---|---|
+| IMG_6511 (MD neighbourhood loop) | 12.6 min | 238 | 0 | 0 |
+| IMG_6513 (Centreville VA to Gaithersburg MD) | 36.5 min | 274 | 5 | 5 |
+
+- **Result:** the pipeline ran end to end on real footage with live SAM 3.1 and Muse Spark. All 5 hazards are "debris in lane", severity 1, on the shoulder (tire-like objects, a tipped orange barrel). The blurred photos match the verdicts, and the face and plate masks were applied.
+- **No road-surface defects** (potholes, cracks) were found in either drive, which matches a visual check of the frames. Recall is still unmeasured: there is no ground truth until the hand labels exist (tasks 12, 20, 21).
+- **"worn lane line" is too noisy:** it produced 167 of 238 candidates on IMG_6511 and every one was rejected. Dropped from the real-run prompts, which are now: pothole in the road surface; object lying on the road; bent or broken guardrail; bent traffic sign.
+- **Verification is the long pole:** about 10 to 15 s per candidate. The verifier's rejection reasons were sensible (manhole covers, patches, intact guardrails).
+- **Dedup radius vs coarse GPS:** the tipped barrel was reported as two hazards about 40 m apart, beyond the 25 m dedup radius, because the Timeline track is about one point per minute. A per-second GPX should merge them. Consider scaling the radius with GPS spacing.
+- **Verification prompt gap:** a lane "shoulder" location was accepted for "debris in lane". Tighten the prompt in task 21.
+- **Cost:** about $14 of Meta API spend for these two drives (estimate from the cost log), plus about $3 for the spike.
+- **Bugs the real run exposed (all fixed):** one network blip killed an unprotected verification run (26b: longer retries, failed candidates skipped with a warning); resumable pipeline so a failed drive does not repay detection (26c); the privacy blur sent JPEGs as `input_video` and got HTTP 400 (26d: images go as `input_image`); the test suite touched the real data DB at app startup (autouse isolation in `tests/unit/conftest.py`).
+
 ## Open items
 
-- No real hazards in the footage, so detection recall and the best frame rate for small hazards are unmeasured.
-- No GPX, so geotagging, dedup and the report prefill were not exercised on real data.
+- Detection recall and the best frame rate for small hazards are unmeasured (no labelled hazards yet).
+- Report prefill (VDOT, MDOT SHA) and the map and review UI have not been checked on real data.
+- A done drive with a skip-warning cannot retry only its skipped candidates yet.
 - Muse Spark reasoning tokens dominate its cost; a lower reasoning effort setting was not tried.
 - Export blur coverage: SAM omits frames with no match, so the export cannot tell a frame with nothing to blur from a missed face or plate. Plan a conservative blur (hold masks across short gaps) before the export is used for anything shared.
