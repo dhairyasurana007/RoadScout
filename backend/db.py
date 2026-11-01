@@ -77,6 +77,12 @@ DRIVES_WARNING_COLUMNS = {
 # Columns added to drives for resumable runs (task 26c), same idempotent migration.
 #   resumed       1 when the latest run resumed earlier work (checkpoints), else 0 (shown as a bool)
 #   resumed_from  the first stage that still had work to do in that run; NULL when not resumed
+DRIVES_FILENAME_COLUMNS = {
+    # task 12: the base name of the uploaded video file as the browser sent it (no directories); NULL if none.
+    # The eval matches hand-label files (labels/<stem>.csv) to drives with it. Not part of the drive JSON.
+    "video_filename": "TEXT",
+}
+
 DRIVES_RESUME_COLUMNS = {
     "resumed": "INTEGER DEFAULT 0",
     "resumed_from": "TEXT",
@@ -363,6 +369,7 @@ def init_db(path: Path | str | None = None) -> Path:
         _add_missing_columns(conn, "drives", DRIVES_VIDEO_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_WARNING_COLUMNS)
         _add_missing_columns(conn, "drives", DRIVES_RESUME_COLUMNS)
+        _add_missing_columns(conn, "drives", DRIVES_FILENAME_COLUMNS)
         conn.execute(PIPELINE_RUNS_SCHEMA)
         conn.execute(DETECTION_CHUNKS_SCHEMA)
         conn.execute(DETECTIONS_SCHEMA)

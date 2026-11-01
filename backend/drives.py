@@ -46,8 +46,15 @@ def _extension(filename: str | None) -> str:
     return f".{match.group(1).lower()}" if match else ".bin"
 
 
+def _base_name(filename: str | None) -> str | None:
+    """The file name the browser sent without any directories (None if there is none)."""
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    return name or None
+
+
 def _row_to_drive(row) -> dict:
     drive = dict(row)
+    drive.pop("video_filename", None)  # only for the eval's label matching, not part of the drive JSON
     started = datetime.fromisoformat(drive["started_at"])
     drive["effective_started_at"] = (
         started + timedelta(seconds=drive["clock_offset_seconds"])
@@ -99,11 +106,12 @@ def create_drive(
         try:
             conn.execute(
                 "INSERT INTO drives (id, started_at, started_at_source, clock_offset_seconds,"
-                " video_path, gpx_path, status, duration_seconds, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " video_path, gpx_path, status, duration_seconds, created_at, updated_at, video_filename)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     drive_id, started_at.isoformat(), source, offset, video_key, gpx_key,
                     STATUS_UPLOADED, video_info.duration_seconds, now.isoformat(), now.isoformat(),
+                    _base_name(video.filename),
                 ),
             )
             conn.commit()

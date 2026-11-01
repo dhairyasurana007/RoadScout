@@ -1,0 +1,4 @@
+row_type,segment_id,start,end,class,severity,hazard_id,note
+segment,A,00:00,02:30,,,,EXAMPLE ROW: replace with a real 2-3 minute stretch
+hazard,A,01:12,01:16,debris in lane,1,H1,EXAMPLE ROW: tipped orange barrel on the right shoulder
+segment,B,10:00,12:30,,,,EXAMPLE ROW: a stretch with nothing on the road (clean)
