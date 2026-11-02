@@ -4,6 +4,25 @@ A dashboard-mounted phone records a drive. The backend finds road hazards (SAM 3
 
 Stack: Python + FastAPI, React (Vite), SQLite, pytest, Playwright, ffmpeg.
 
+## Overview
+
+**How it works.** A person records a drive with a phone on the dashboard plus a GPS track (GPX). RoadScout then:
+
+1. **Preprocesses** the video with ffmpeg: strips audio, downsamples to about 720p and 3 frames per second, splits it into 20 second chunks, skips stationary stretches using the GPS speed.
+2. **Detects** with SAM 3.1: one text prompt per hazard phrase per chunk. Tracks become candidates, one per object, each geotagged from the GPX.
+3. **Verifies** with Muse Spark: a structured verdict per candidate (is it real, class, severity, lane, confidence, reason).
+4. **Blurs** faces and license plates (SAM 3.1 again), so only blurred images are ever shown or served.
+5. **Deduplicates** sightings within and across drives (same class, nearby, same direction) into hazards, and marks a hazard "possibly fixed" when later drives pass it with no sighting.
+6. **Prefills** a VDOT (Virginia) or MDOT SHA (Maryland state roads) report. A human reviews each hazard, approves it and submits the report on the agency's own site. **RoadScout never submits anything.**
+
+Deterministic code does the heavy lifting; a model is called only for detection, verification and the privacy blur. The pipeline checkpoints every chunk and candidate, so a failed drive resumes without paying for detection again.
+
+**What it did on real footage** (two dashcam drives, about 49 minutes, live Meta models, details in `docs/spike-notes.md`): 512 candidates, 5 verified hazards, all low-severity debris on the shoulder (tire-like objects and a tipped construction barrel). The blurred photos match the verdicts. About $14 of Meta API spend for both drives.
+
+**What it has not shown yet.** There were no potholes in the recorded footage, so pothole detection is untested. Recall is unmeasured until hand labels exist (`labels/README.md`; run `python scripts/eval.py`). GPS positions are rough when the track is sparse (Google Timeline gives about one point per minute, so one hazard can appear twice about 40 m apart).
+
+**Privacy.** Audio is stripped. Unblurred frames stay on your machine; the only exception is the Muse Spark verification call. The review screen, reports and any hosted demo use blurred images only. A Delete video button removes the raw video and extracted frames.
+
 ## Prerequisites
 
 Python 3.11+, Node 20+ with npm, and ffmpeg and ffprobe on PATH.
@@ -396,7 +415,7 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 - `frontend/` Vite React app (upload/results page in `src/App.jsx`, hazard map in `src/HazardMap.jsx`, prefilled report dialog in `src/ReportPanel.jsx`); Playwright tests in `frontend/e2e/`
 - `tests/unit/` pytest tests
 - `.github/workflows/ci.yml` CI (pytest and Playwright)
-- `docs/architecture-plan.md` the plan; `scripts/preflight.py` environment checks
+- `docs/architecture-plan.md` the plan; `docs/spike-notes.md` real-run findings; `docs/demo-script.md` the demo walkthrough; `scripts/preflight.py` environment checks
 
 ## Live provider (task 26)
 
