@@ -427,6 +427,8 @@ The workflow sets `ROADSCOUT_PROVIDER=fake` so CI uses the fake provider (and re
 
 ## Hosted demo (Render)
 
+**Not deployed.** The demo for this project is a recorded walkthrough of the local build (`docs/demo-script.md`); no photos are committed and nothing is hosted. The read-only mode, `Dockerfile` and `render.yaml` below are kept for anyone who wants to host a copy: they need a prebuilt `demo/` dataset (a database plus blurred photos only) that is not in this repository.
+
 The hosted demo is a read-only copy of RoadScout with a prebuilt dataset, for people who only want to look. It has no raw video and no API key on the server.
 
 - **Demo mode**: set `ROADSCOUT_DEMO=1` (also `true`, `on`, `yes`). Every request under `/api` that is not GET, HEAD or OPTIONS (upload, process, delete video, export, approve or edit a hazard, mark as reported) is answered with `403 {"detail": "This is a read-only demo."}` by a middleware, before any handler runs, so even invalid bodies and unknown ids get the 403. `/health` stays open and `GET /api/demo` answers `{"demo": true|false}`. In demo mode the live provider is never built and `META_API_KEY` is never read, even if `ROADSCOUT_PROVIDER=live`, and the server does not write to the database at start-up. The GET routes were checked: none returns the raw upload or an unblurred image (the photo routes serve only privacy-blurred files and keep their fail-closed 404s).

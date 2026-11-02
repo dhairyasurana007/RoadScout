@@ -216,7 +216,7 @@ The final build adds everything judges see in the demo: the map, review, privacy
 - [ ] **20. `feat: eval v1`** Ablation of SAM 3.1 alone vs plus Muse Spark on the labeled segments; precision and false alarms per hour from the reviewed full drives (task 17 approve/reject); dedup accuracy on hazards seen across repeated drives; cost and processing time per minute; results written to a markdown report.
 - [ ] **21. `feat: prompt experiments`** Run several SAM 3.1 phrasings and verification prompts against the labeled segments only (not whole drives, to save credits); keep the best as defaults.
 - [x] **22. `feat: annotated video export`** Side-by-side raw and annotated video for the demo. Run the face and plate blur on the exported segments only (a few short clips, to save credits), so no unblurred faces or plates appear in the demo.
-- [ ] **23. `chore: deploy demo`** One small cloud server, seeded with the blurred results of your real drives only (no raw video, no API key on the server), live link for judges. Requires task 15.
+- [x] **23. `chore: deploy demo`** **Decided 2026-11-01: no hosted demo.** The user chose not to commit blurred photos to the repo, so the demo is a recorded walkthrough of the local build (`docs/demo-script.md`). Done: read-only demo mode, `Dockerfile`, `.dockerignore` and `render.yaml` (commits 0e1d30a, ae9d036), left in place and unused. Original text:  One small cloud server, seeded with the blurred results of your real drives only (no raw video, no API key on the server), live link for judges. Requires task 15.
 - [ ] **24. `docs: README and demo script`** Architecture summary, setup, eval results, and the walkthrough you'll record.
 - [ ] **25. `feat: Expo capture app` (stretch)** One-tap recording of video and GPS with upload; only if everything above is done.
 
@@ -245,7 +245,7 @@ The final build adds everything judges see in the demo: the map, review, privacy
 
 - [ ] Meta Model API access: the key, endpoint URLs, Muse Spark model ID, rate limits, video length caps, credits, and whether SAM 3.1 accepts several text prompts in one call. Blocks task 26.
 - [ ] Is the $150 credit pool shared by SAM 3.1 and Muse Spark, and does it expire?
-- [ ] Demo as a hosted web app with a live link, or a recorded walkthrough of a local build? Suggested: record the walkthrough regardless, and host a read-only demo seeded with already-blurred results, with no public uploads and no API key on the server.
+- [x] Demo as a hosted web app with a live link, or a recorded walkthrough of a local build? **Decided 2026-11-01: recorded walkthrough of the local build.** No photos are committed and nothing is hosted.
 - [ ] Off-the-shelf recorder plus GPX logger (the current default), or build the Expo capture app early?
 
 Sources: [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) · [SAM 3.1 on the Meta Model API (Mind-Verse)](https://www.mind-verse.de/news/meta-sam-3-1-bild-video-analyse-api) · [VDOT report a road problem](https://my.vdot.virginia.gov/) · [MDOT SHA customer service](https://roads.maryland.gov/mdotsha/pages/Index.aspx?PageId=519)
