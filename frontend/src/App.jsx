@@ -37,10 +37,10 @@ function HazardCard({ hazard }) {
     <li
       data-testid="hazard-item"
       data-candidate-id={hazard.candidate_id}
-      style={{ display: "flex", gap: "1rem", marginBottom: "1rem", listStyle: "none" }}
+      className="rs-hazard-card"
     >
       {photoFailed || !hazard.photo_url ? (
-        <div data-testid="hazard-photo-missing" style={{ width: 240, color: "#666" }}>
+        <div data-testid="hazard-photo-missing" className="rs-photo-missing">
           Photo unavailable
         </div>
       ) : (
@@ -52,11 +52,17 @@ function HazardCard({ hazard }) {
           onError={() => setPhotoFailed(true)}
         />
       )}
-      <dl style={{ margin: 0 }}>
+      <dl>
         <dt>Class</dt>
-        <dd data-testid="hazard-class">{hazard.hazard_class}</dd>
+        <dd data-testid="hazard-class">
+          <span className="rs-pill">{hazard.hazard_class}</span>
+        </dd>
         <dt>Severity</dt>
-        <dd data-testid="hazard-severity">{severityText(hazard.severity)}</dd>
+        <dd data-testid="hazard-severity">
+          <span className="rs-pill rs-sev" data-severity={hazard.severity}>
+            {severityText(hazard.severity)}
+          </span>
+        </dd>
         <dt>Confidence</dt>
         <dd data-testid="hazard-confidence">{Math.round(hazard.confidence * 100)}%</dd>
         <dt>Location</dt>
@@ -73,26 +79,74 @@ function HazardCard({ hazard }) {
 }
 
 function Hazards({ hazards }) {
-  if (hazards.state === "loading") return <p data-testid="hazards-loading">Loading hazards...</p>;
+  if (hazards.state === "loading") return <p data-testid="hazards-loading" className="rs-hint-text">Loading hazards...</p>;
   if (hazards.state === "error")
     return (
-      <p data-testid="hazards-error" role="alert" style={{ color: "#b00020" }}>
+      <p data-testid="hazards-error" role="alert" className="rs-alert">
         {hazards.message}
       </p>
     );
   if (hazards.state !== "ready") return null;
-  if (hazards.items.length === 0) return <p data-testid="hazards-empty">No verified hazards</p>;
+  if (hazards.items.length === 0) return <p data-testid="hazards-empty" className="rs-empty">No verified hazards</p>;
   return (
     <>
-      <p data-testid="hazard-count">
+      <p data-testid="hazard-count" className="rs-count">
         {hazards.items.length} verified {hazards.items.length === 1 ? "hazard" : "hazards"}
       </p>
-      <ul data-testid="hazard-list" style={{ padding: 0 }}>
+      <ul data-testid="hazard-list" className="rs-hazard-list">
         {hazards.items.map((h) => (
           <HazardCard key={h.candidate_id} hazard={h} />
         ))}
       </ul>
     </>
+  );
+}
+
+// A file field styled as a drop target. The native <input type="file"> still receives the drop; this only adds the
+// drag-over highlight.
+function DropField({ children }) {
+  const [over, setOver] = useState(false);
+  return (
+    <label
+      className="rs-dropzone"
+      data-dragover={over}
+      onDragEnter={() => setOver(true)}
+      onDragOver={() => setOver(true)}
+      onDragLeave={() => setOver(false)}
+      onDrop={() => setOver(false)}
+    >
+      {children}
+    </label>
+  );
+}
+
+// Visual only (hidden from assistive technology): the pipeline stages as a row of steps. The stage name itself is in
+// the "Stage" text of the drive panel.
+const STEP_LABELS = [
+  ["preprocessing", "Prepare"],
+  ["detecting", "Detect"],
+  ["aggregating", "Group"],
+  ["verifying", "Verify"],
+  ["blurring", "Blur"],
+  ["deduplicating", "Merge"],
+  ["checking_fixes", "Recheck"],
+];
+
+function StageSteps({ drive }) {
+  if (!["processing", "done", "failed"].includes(drive.status)) return null;
+  const names = STEP_LABELS.map(([name]) => name);
+  const active = drive.status === "failed" ? names.indexOf(drive.failed_stage) : names.indexOf(drive.stage);
+  return (
+    <ol className="rs-steps" aria-hidden="true">
+      {STEP_LABELS.map(([name, label], i) => {
+        let state = "todo";
+        if (drive.status === "done") state = "done";
+        else if (active >= 0 && i < active) state = "done";
+        else if (active === i) state = drive.status === "failed" ? "failed" : "current";
+        else if (active < 0 && drive.status === "processing" && i === 0) state = "current";
+        return <li key={name} className="rs-step" data-step={state} data-label={label} />;
+      })}
+    </ol>
   );
 }
 
@@ -374,70 +428,68 @@ export default function App() {
 
   return (
     <DemoContext.Provider value={demo}>
-    <main style={{ fontFamily: "sans-serif", padding: "2rem", maxWidth: tab === "map" ? 1200 : 800 }}>
-      <h1>RoadScout</h1>
+    <main className={`rs-shell${tab === "map" ? " rs-shell--wide" : ""}`}>
+      <header className="rs-topbar">
+        <div className="rs-brand">
+          <h1>RoadScout</h1>
+          <p className="rs-tagline">Hello, world. Road hazard scouting starts here.</p>
+        </div>
+        <nav aria-label="Views" className="rs-tabs">
+          <button
+            type="button"
+            data-testid="tab-drives"
+            aria-pressed={tab === "drives"}
+            onClick={() => showTab("drives")}
+          >
+            Upload and results
+          </button>
+          <button type="button" data-testid="tab-map" aria-pressed={tab === "map"} onClick={() => showTab("map")}>
+            Hazard map
+          </button>
+        </nav>
+      </header>
       {demo && (
-        <p
-          role="status"
-          data-testid="demo-banner"
-          style={{ background: "#fff4d6", border: "1px solid #d9a400", padding: "0.5rem 0.75rem", fontWeight: 600 }}
-        >
+        <p role="status" data-testid="demo-banner" className="rs-banner">
           {DEMO_BANNER_TEXT}
         </p>
       )}
-      <p>Hello, world. Road hazard scouting starts here.</p>
-      <p
-        role="note"
-        data-testid="privacy-note"
-        style={{ background: "#eef6ee", border: "1px solid #8fbf8f", padding: "0.5rem 0.75rem" }}
-      >
+      <p role="note" data-testid="privacy-note" className="rs-note">
         Photos shown here are privacy-blurred (faces and license plates).{" "}
         {demo
           ? "No raw video is stored on this demo server."
           : "The raw video stays on this machine until you delete it."}
       </p>
 
-      <nav aria-label="Views" style={{ display: "flex", gap: "0.5rem", margin: "1rem 0" }}>
-        <button
-          type="button"
-          data-testid="tab-drives"
-          aria-pressed={tab === "drives"}
-          onClick={() => showTab("drives")}
-        >
-          Upload and results
-        </button>
-        <button type="button" data-testid="tab-map" aria-pressed={tab === "map"} onClick={() => showTab("map")}>
-          Hazard map
-        </button>
-      </nav>
 
       {tab === "map" ? (
         <HazardMap />
       ) : (
-        <>
+        <div className="rs-page">
           {!demo && (
-            <>
+            <div className="rs-card">
           <h2>Upload a drive</h2>
-          <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.75rem" }}>
-            <label>
-              Video file
-              <br />
-              <input
-                type="file"
-                accept="video/*,.mov,.mp4,.mkv,.avi,.m4v"
-                onChange={(e) => setVideo(e.target.files[0] ?? null)}
-              />
-            </label>
-            <label>
-              GPX file
-              <br />
-              <input
-                type="file"
-                accept=".gpx,application/gpx+xml,text/xml,application/xml"
-                onChange={(e) => setGpx(e.target.files[0] ?? null)}
-              />
-            </label>
-            <label>
+          <form onSubmit={onSubmit} className="rs-form">
+            <div className="rs-dropzones">
+              <DropField>
+                Video file
+                <br />
+                <input
+                  type="file"
+                  accept="video/*,.mov,.mp4,.mkv,.avi,.m4v"
+                  onChange={(e) => setVideo(e.target.files[0] ?? null)}
+                />
+              </DropField>
+              <DropField>
+                GPX file
+                <br />
+                <input
+                  type="file"
+                  accept=".gpx,application/gpx+xml,text/xml,application/xml"
+                  onChange={(e) => setGpx(e.target.files[0] ?? null)}
+                />
+              </DropField>
+            </div>
+            <label className="rs-field-offset">
               Clock offset (seconds)
               <br />
               <input
@@ -451,15 +503,19 @@ export default function App() {
                 Added to video time to line it up with the GPX clock. Leave 0 if the clocks agree.
               </small>
             </label>
-            <button type="submit" disabled={busy}>
-              {busy ? "Uploading..." : "Upload drive"}
-            </button>
+            <div className="rs-form-actions">
+              <button type="submit" disabled={busy}>
+                {busy ? "Uploading..." : "Upload drive"}
+              </button>
+              {busy && <div className="rs-progress" aria-hidden="true" />}
+            </div>
           </form>
-            </>
+            </div>
           )}
 
+          <div className="rs-card">
           <h2>Open an existing drive</h2>
-          <form onSubmit={onLoad} style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
+          <form onSubmit={onLoad} className="rs-load-form">
             <label>
               Drive ID
               <br />
@@ -474,44 +530,60 @@ export default function App() {
               {loading ? "Loading..." : "Open drive"}
             </button>
           </form>
+          </div>
 
           {error && (
-            <p role="alert" style={{ color: "#b00020" }}>
+            <p role="alert" className="rs-alert">
               {error}
             </p>
           )}
 
           {drive && (
-            <section aria-label="Drive status">
+            <section aria-label="Drive status" className="rs-card rs-section-gap">
               <h2>{origin === "created" ? "Drive created" : "Drive loaded"}</h2>
-              <dl>
-                <dt>Drive ID</dt>
-                <dd data-testid="drive-id">{drive.id}</dd>
-                <dt>Status</dt>
-                <dd data-testid="drive-status">{drive.status}</dd>
+              <dl className="rs-drive-grid">
+                <div className="rs-stat">
+                  <dt>Drive ID</dt>
+                  <dd data-testid="drive-id">{drive.id}</dd>
+                </div>
+                <div className="rs-stat">
+                  <dt>Status</dt>
+                  <dd data-testid="drive-status">
+                    <span className="rs-state" data-state={drive.status}>
+                      {drive.status}
+                    </span>
+                  </dd>
+                </div>
                 {drive.stage && drive.status !== "uploaded" && (
-                  <>
+                  <div className="rs-stat">
                     <dt>Stage</dt>
                     <dd data-testid="drive-stage">{drive.stage}</dd>
-                  </>
+                  </div>
                 )}
-                <dt>Video start time</dt>
-                <dd data-testid="drive-started-at">
-                  {drive.started_at}
-                  {drive.started_at_fell_back && " (not in video metadata; estimated)"}
-                </dd>
-                <dt>Clock offset</dt>
-                <dd data-testid="drive-offset">{drive.clock_offset_seconds} s</dd>
-                <dt>Raw video</dt>
-                <dd data-testid="drive-video-state">
-                  {videoDeleted
-                    ? `Deleted${drive.video_deleted_at ? ` at ${drive.video_deleted_at}` : ""}`
-                    : "Kept on this machine"}
-                </dd>
+                <div className="rs-stat">
+                  <dt>Video start time</dt>
+                  <dd data-testid="drive-started-at">
+                    {drive.started_at}
+                    {drive.started_at_fell_back && " (not in video metadata; estimated)"}
+                  </dd>
+                </div>
+                <div className="rs-stat">
+                  <dt>Clock offset</dt>
+                  <dd data-testid="drive-offset">{drive.clock_offset_seconds} s</dd>
+                </div>
+                <div className="rs-stat">
+                  <dt>Raw video</dt>
+                  <dd data-testid="drive-video-state">
+                    {videoDeleted
+                      ? `Deleted${drive.video_deleted_at ? ` at ${drive.video_deleted_at}` : ""}`
+                      : "Kept on this machine"}
+                  </dd>
+                </div>
               </dl>
+              <StageSteps drive={drive} />
 
               {!demo && (
-              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+              <div className="rs-drive-actions">
                 <button
                   type="button"
                   data-testid="start-processing"
@@ -557,25 +629,25 @@ export default function App() {
               </div>
               )}
               {videoDeleted && (
-                <p data-testid="video-deleted-hint" style={{ color: "#555" }}>
+                <p data-testid="video-deleted-hint" className="rs-hint-text">
                   The raw video and unblurred frames were deleted from this machine. The blurred results below
                   are kept, but this drive cannot be processed again.
                 </p>
               )}
               {deleteError && (
-                <p data-testid="delete-video-error" role="alert" style={{ color: "#b00020" }}>
+                <p data-testid="delete-video-error" role="alert" className="rs-alert">
                   {deleteError}
                 </p>
               )}
 
               {pollError && (
-                <p data-testid="poll-error" style={{ color: "#8a5a00" }}>
+                <p data-testid="poll-error" className="rs-warn">
                   {pollError}
                 </p>
               )}
 
               {drive.status === "failed" && (
-                <div data-testid="drive-failed" style={{ color: "#b00020" }}>
+                <div data-testid="drive-failed" className="rs-failed">
                   <strong>Processing failed</strong>
                   {drive.failed_stage && (
                     <>
@@ -595,7 +667,7 @@ export default function App() {
               )}
             </section>
           )}
-        </>
+        </div>
       )}
     </main>
     </DemoContext.Provider>

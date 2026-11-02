@@ -309,20 +309,20 @@ function PopupContent({ hazard, ctx }) {
   const [photoFailed, setPhotoFailed] = useState(false);
   return (
     <div className="rs-popup" data-testid="hazard-popup" data-hazard-id={String(hazard.id)}>
-      <strong data-testid="hazard-popup-class">{hazard.hazard_class}</strong>
+      <strong data-testid="hazard-popup-class" className="rs-pill">{hazard.hazard_class}</strong>
       {hazard.class_edited && <EditedMark testid="hazard-popup-class-edited" was={hazard.original_hazard_class} />}
-      <div data-testid="hazard-popup-severity">
+      <div data-testid="hazard-popup-severity" data-severity={hazard.severity} className="rs-popup-row">
         Severity: {severityText(hazard.severity)}
         {hazard.severity_edited && <EditedMark testid="hazard-popup-severity-edited" was={hazard.original_severity} />}
       </div>
-      <div data-testid="hazard-popup-status">
+      <div data-testid="hazard-popup-status" className="rs-popup-row">
         Status: <StatusBadge status={hazard.status} testid="hazard-popup-status-badge" />
       </div>
       <FixNote hazard={hazard} prefix="hazard-popup" />
-      <div data-testid="hazard-popup-sightings">Sightings: {hazard.sightings}</div>
+      <div data-testid="hazard-popup-sightings" className="rs-popup-row">Sightings: {hazard.sightings}</div>
       {hazard.photo_url &&
         (photoFailed ? (
-          <div data-testid="hazard-popup-photo-missing">Photo unavailable</div>
+          <div data-testid="hazard-popup-photo-missing" className="rs-popup-missing">Photo unavailable</div>
         ) : (
           <img
             data-testid="hazard-popup-photo"
@@ -650,9 +650,9 @@ export default function HazardMap() {
   const itemsById = new Map(data.items.map((h) => [h.id, h]));
 
   return (
-    <section aria-label="Hazard map" data-testid="hazard-map-section" data-selected-hazard-id={selectedId} data-host-version={hostVersion}>
+    <section aria-label="Hazard map" className="rs-map-section" data-testid="hazard-map-section" data-selected-hazard-id={selectedId} data-host-version={hostVersion}>
       <h2>Hazard map</h2>
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+      <div className="rs-toolbar">
         <label>
           Status{" "}
           <select data-testid="hazard-map-filter" value={filter} onChange={onFilter}>
@@ -668,24 +668,24 @@ export default function HazardMap() {
           {loading ? "Loading..." : "Refresh"}
         </button>
         {data.state === "ready" && data.items.length > 0 && (
-          <span data-testid="hazard-map-count">
+          <span data-testid="hazard-map-count" className="rs-count-badge">
             {data.items.length} {data.items.length === 1 ? "hazard" : "hazards"}
           </span>
         )}
       </div>
-      {loading && <p data-testid="hazard-map-loading">Loading hazards...</p>}
+      {loading && <p data-testid="hazard-map-loading" className="rs-hint-text">Loading hazards...</p>}
       {data.state === "error" && (
-        <p data-testid="hazard-map-error" role="alert" style={{ color: "#b00020" }}>
+        <p data-testid="hazard-map-error" role="alert" className="rs-alert">
           {data.message}
         </p>
       )}
       {notice && (
-        <p data-testid="hazard-review-notice" role="status">
+        <p data-testid="hazard-review-notice" role="status" className="rs-warn">
           {notice}
         </p>
       )}
       {data.state === "ready" && data.items.length === 0 && (
-        <p data-testid="hazard-map-empty">{filter ? `No hazards with status ${statusText(filter)}` : "No hazards yet"}</p>
+        <p data-testid="hazard-map-empty" className="rs-empty">{filter ? `No hazards with status ${statusText(filter)}` : "No hazards yet"}</p>
       )}
 
       <div className="rs-map-layout">
@@ -718,11 +718,11 @@ export default function HazardMap() {
                   onClick={() => setSelection((s) => ({ id: h.id, source: "list", n: s.n + 1 }))}
                 >
                   <Thumb hazard={h} />
-                  <span>
-                    <strong data-testid="hazard-list-class">{h.hazard_class}</strong>
+                  <span className="rs-list-body">
+                    <strong data-testid="hazard-list-class" className="rs-pill">{h.hazard_class}</strong>
                     {h.class_edited && <EditedMark testid="hazard-class-edited" was={h.original_hazard_class} />}
                     <br />
-                    <span data-testid="hazard-list-severity">Severity {severityText(h.severity)}</span>
+                    <span data-testid="hazard-list-severity" className="rs-pill rs-sev" data-severity={h.severity}>Severity {severityText(h.severity)}</span>
                     {h.severity_edited && <EditedMark testid="hazard-severity-edited" was={h.original_severity} />}
                     <br />
                     <StatusBadge status={h.status} testid="hazard-list-status" />
