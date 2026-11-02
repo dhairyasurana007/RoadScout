@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDemo } from "./demo.jsx";
 
 // The prefilled agency report of one approved hazard (task 18). Everything shown comes from
 // GET /api/hazards/{id}/report. The panel never submits anything anywhere: the only outbound thing is the
@@ -107,6 +108,7 @@ function ReportPhoto({ report }) {
  * hazard runs at a time.
  */
 export default function ReportPanel({ hazardId, ctx, onClose }) {
+  const demo = useDemo(); // read-only demo: the agency is shown but cannot be changed, no "Mark as reported"
   const [state, setState] = useState({ phase: "loading", report: null, message: "", status: 0 });
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(true);
@@ -266,7 +268,7 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
       data-testid="report-agency-select"
       aria-label="Agency"
       value={report ? (report.agency ?? "none") : "none"}
-      disabled={!report || busy || refreshing}
+      disabled={demo || !report || busy || refreshing}
       onChange={(e) => changeAgency(e.target.value)}
     >
       {AGENCY_CHOICES.map((c) => (
@@ -333,7 +335,7 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
               <span data-testid="report-agency-source" data-source={report.agency_source}>
                 {report.agency_source === "user" ? "Chosen by you" : "Automatic (from the hazard's location)"}
               </span>
-              {report.agency_source === "user" && (
+              {!demo && report.agency_source === "user" && (
                 <button type="button" data-testid="report-agency-auto" disabled={busy || refreshing} onClick={useAutomatic}>
                   Use automatic ({agencyLabel(report.automatic_agency)})
                 </button>
@@ -424,19 +426,23 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
                   Open official form
                 </a>
               )}
-              <button
-                type="button"
-                ref={markRef}
-                data-testid="report-mark-reported"
-                disabled={busy || refreshing || report.hazard_status === "reported"}
-                onClick={markReported}
-              >
-                {report.hazard_status === "reported" ? "Marked as reported" : "Mark as reported"}
-              </button>
+              {!demo && (
+                <button
+                  type="button"
+                  ref={markRef}
+                  data-testid="report-mark-reported"
+                  disabled={busy || refreshing || report.hazard_status === "reported"}
+                  onClick={markReported}
+                >
+                  {report.hazard_status === "reported" ? "Marked as reported" : "Mark as reported"}
+                </button>
+              )}
             </div>
-            <p className="rs-hint">
-              "Mark as reported" only records in RoadScout that you submitted this report yourself. It sends nothing.
-            </p>
+            {!demo && (
+              <p className="rs-hint">
+                "Mark as reported" only records in RoadScout that you submitted this report yourself. It sends nothing.
+              </p>
+            )}
             <p role="status" data-testid="report-copy-status" data-state={copy.state}>
               {copy.state === "copied" && "Copied"}
               {copy.state === "failed" && "Could not copy automatically. Select the text below and copy it yourself."}

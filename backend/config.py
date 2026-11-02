@@ -19,8 +19,26 @@ def storage_dir() -> Path:
     return Path(os.environ.get("ROADSCOUT_STORAGE_DIR") or ROOT / "data" / "storage")
 
 
+_TRUE_WORDS = ("1", "true", "on", "yes")
+
+
+def demo_mode() -> bool:
+    """Whether the read-only hosted demo is on. Set ROADSCOUT_DEMO to 1/true/on/yes (case-insensitive); anything
+    else is off. Read at call time."""
+    return (os.environ.get("ROADSCOUT_DEMO") or "").strip().lower() in _TRUE_WORDS
+
+
+def static_dir() -> Path | None:
+    """The built frontend (frontend/dist) to serve at /, or None. Set ROADSCOUT_STATIC_DIR. Read at call time."""
+    raw = (os.environ.get("ROADSCOUT_STATIC_DIR") or "").strip()
+    return Path(raw) if raw else None
+
+
 def meta_api_key() -> str | None:
-    """The Meta API key, or None when unset. Never log or print this value."""
+    """The Meta API key, or None when unset. Never log or print this value. Always None in demo mode: the
+    hosted demo never reads the key."""
+    if demo_mode():
+        return None
     return os.environ.get("META_API_KEY") or None
 
 

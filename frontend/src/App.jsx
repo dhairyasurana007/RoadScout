@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import HazardMap from "./HazardMap.jsx";
+import { DEMO_BANNER_TEXT, DemoContext, useDemoStatus } from "./demo.jsx";
 
 const DEFAULT_POLL_MS = 1500;
 
@@ -101,6 +102,7 @@ function initialTab() {
 }
 
 export default function App() {
+  const demo = useDemoStatus(); // read-only hosted demo: banner, and no controls that change anything
   const [tab, setTab] = useState(initialTab);
   const [video, setVideo] = useState(null);
   const [gpx, setGpx] = useState(null);
@@ -371,16 +373,28 @@ export default function App() {
   }
 
   return (
+    <DemoContext.Provider value={demo}>
     <main style={{ fontFamily: "sans-serif", padding: "2rem", maxWidth: tab === "map" ? 1200 : 800 }}>
       <h1>RoadScout</h1>
+      {demo && (
+        <p
+          role="status"
+          data-testid="demo-banner"
+          style={{ background: "#fff4d6", border: "1px solid #d9a400", padding: "0.5rem 0.75rem", fontWeight: 600 }}
+        >
+          {DEMO_BANNER_TEXT}
+        </p>
+      )}
       <p>Hello, world. Road hazard scouting starts here.</p>
       <p
         role="note"
         data-testid="privacy-note"
         style={{ background: "#eef6ee", border: "1px solid #8fbf8f", padding: "0.5rem 0.75rem" }}
       >
-        Photos shown here are privacy-blurred (faces and license plates). The raw video stays on this
-        machine until you delete it.
+        Photos shown here are privacy-blurred (faces and license plates).{" "}
+        {demo
+          ? "No raw video is stored on this demo server."
+          : "The raw video stays on this machine until you delete it."}
       </p>
 
       <nav aria-label="Views" style={{ display: "flex", gap: "0.5rem", margin: "1rem 0" }}>
@@ -401,6 +415,8 @@ export default function App() {
         <HazardMap />
       ) : (
         <>
+          {!demo && (
+            <>
           <h2>Upload a drive</h2>
           <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.75rem" }}>
             <label>
@@ -439,6 +455,8 @@ export default function App() {
               {busy ? "Uploading..." : "Upload drive"}
             </button>
           </form>
+            </>
+          )}
 
           <h2>Open an existing drive</h2>
           <form onSubmit={onLoad} style={{ display: "flex", gap: "0.5rem", alignItems: "end" }}>
@@ -492,6 +510,7 @@ export default function App() {
                 </dd>
               </dl>
 
+              {!demo && (
               <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   type="button"
@@ -536,6 +555,7 @@ export default function App() {
                   </button>
                 )}
               </div>
+              )}
               {videoDeleted && (
                 <p data-testid="video-deleted-hint" style={{ color: "#555" }}>
                   The raw video and unblurred frames were deleted from this machine. The blurred results below
@@ -578,5 +598,6 @@ export default function App() {
         </>
       )}
     </main>
+    </DemoContext.Provider>
   );
 }

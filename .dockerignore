@@ -1,0 +1,28 @@
+# Keep secrets, local data and footage out of the Docker build context.
+.env
+.env.*
+!.env.example
+data/
+spike/
+labels/
+.git
+.github
+.claude
+**/node_modules
+frontend/dist
+frontend/playwright-report
+frontend/test-results
+tests/
+docs/
+**/__pycache__
+**/*.pyc
+.pytest_cache
+# footage and tracks (never part of an image)
+**/*.gpx
+**/*.mov
+**/*.MOV
+**/*.mp4
+**/*.MP4
+**/*.m4v
+**/*.mkv
+**/*.avi

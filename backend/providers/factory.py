@@ -6,6 +6,9 @@ constructor (``scenario`` for fake, ``fixtures_dir`` for fixture, ``api_key``, `
 ... for live). Without ``kw``, fake reads ROADSCOUT_FAKE_SCENARIO and fixture reads
 ROADSCOUT_FIXTURES_DIR. Live raises an error mentioning META_API_KEY if the key is unset.
 
+In demo mode (ROADSCOUT_DEMO) ``live`` is replaced by ``fake``: the live provider is never built and
+META_API_KEY is never read.
+
 Live providers share one process-wide ``SpendTracker`` (cap from ROADSCOUT_SPEND_CAP_USD,
 log at ROADSCOUT_COST_LOG, default data/cost_log.jsonl).
 """
@@ -42,6 +45,9 @@ def reset_spend_tracker() -> None:
 
 def get_provider(name: str | None = None, **kw: Any) -> ModelProvider:
     name = (name or config.provider_name()).strip().lower()
+    if config.demo_mode() and name == "live":
+        name = "fake"  # the read-only demo never builds the live provider or reads the key
+        kw = {k: v for k, v in kw.items() if k == "scenario"}
     if name == "fake":
         kw.setdefault("scenario", config.fake_scenario())
         return FakeProvider(**kw)

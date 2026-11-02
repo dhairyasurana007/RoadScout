@@ -4,6 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./HazardMap.css";
 import ReportPanel from "./ReportPanel.jsx";
+import { useDemo } from "./demo.jsx";
 
 // Northern Virginia / Maryland commute area, shown when there is nothing to fit.
 export const DEFAULT_CENTER = [38.9, -77.2];
@@ -127,6 +128,7 @@ function EditedMark({ testid, was }) {
 // ctx = { pending: Set of hazard ids with a request in flight, errors: { id: message }, submit(id, body), clearError(id) }
 function ReviewControls({ hazard, ctx }) {
   const id = hazard.id;
+  const demo = useDemo(); // read-only demo: no Approve / Reject / Reset / Edit
   const busy = ctx.pending.has(id);
   const error = ctx.errors[id];
   const [editing, setEditing] = useState(false);
@@ -171,6 +173,8 @@ function ReviewControls({ hazard, ctx }) {
   return (
     <div className="rs-review" data-testid="hazard-review" data-busy={String(busy)} aria-busy={busy}>
       <div className="rs-review-buttons" role="group" aria-label={`Review hazard ${id}`}>
+        {!demo && (
+        <>
         <button
           type="button"
           data-testid="hazard-approve"
@@ -198,6 +202,8 @@ function ReviewControls({ hazard, ctx }) {
         >
           Reset
         </button>
+        </>
+        )}
         {(hazard.status === "approved" || hazard.status === "reported") && (
           <button
             type="button"
@@ -210,7 +216,7 @@ function ReviewControls({ hazard, ctx }) {
             Prefilled report
           </button>
         )}
-        {!editing && (
+        {!demo && !editing && (
           <button
             type="button"
             ref={editRef}
@@ -223,7 +229,7 @@ function ReviewControls({ hazard, ctx }) {
           </button>
         )}
       </div>
-      {editing && (
+      {!demo && editing && (
         <form className="rs-edit" data-testid="hazard-edit-form" aria-label={`Edit hazard ${id}`} onSubmit={save}>
           <label>
             Class{" "}
@@ -273,7 +279,7 @@ function ReviewControls({ hazard, ctx }) {
           )}
         </form>
       )}
-      {hazard.status === "possibly_fixed" && (
+      {!demo && hazard.status === "possibly_fixed" && (
         <div className="rs-hint" data-testid="hazard-fix-hint">
           <p>
             Approve, Reject or Reset answers this flag: the hazard gets that status, and it is flagged again only if more

@@ -1,0 +1,12 @@
+# Render blueprint for the read-only RoadScout demo. The server never calls the Meta API.
+services:
+  - type: web
+    name: roadscout-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ROADSCOUT_DEMO
+        value: "1"
