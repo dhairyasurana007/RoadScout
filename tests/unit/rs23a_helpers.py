@@ -213,15 +213,15 @@ class Seed:
 
 def mutating_routes(app):
     """[(method, path_template)] of every real route that changes state."""
+    # Read the routes from the OpenAPI schema: newer FastAPI versions no longer list included routers' routes
+    # one by one in app.routes, while the schema is stable across versions.
     out = []
-    for r in app.routes:
-        path = getattr(r, "path", "")
-        methods = getattr(r, "methods", None) or set()
+    for path, item in app.openapi().get("paths", {}).items():
         if not path.startswith("/api"):
             continue
-        for m in sorted(methods):
-            if m in MUTATING:
-                out.append((m, path))
+        for m in sorted(item):
+            if m.upper() in MUTATING:
+                out.append((m.upper(), path))
     return out
 
 
