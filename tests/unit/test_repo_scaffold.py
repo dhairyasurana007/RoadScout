@@ -126,7 +126,9 @@ def test_no_api_key_value_committed_anywhere():
 
 
 def test_no_real_footage_or_gpx_in_repo():
-    bad = [str(p.relative_to(REPO)) for p in walk_files(REPO, (".mov", ".mp4", ".m4v", ".hevc", ".gpx"))]
+    found = [p.relative_to(REPO).as_posix() for p in walk_files(REPO, (".mov", ".mp4", ".m4v", ".hevc", ".gpx"))]
+    # Git-ignored files (data/storage, spike/footage on a developer machine) are never committed; only the rest count.
+    bad = [rel for rel in found if not is_ignored(rel)]
     assert not bad, bad
 
 
