@@ -27,3 +27,7 @@ Delete the EXAMPLE rows when you add real ones. Open the files in Excel or any t
 - Every `hazard` row must fall inside a `segment` row with the same `segment_id`.
 - Do not label stretches where the car is stopped or the camera is blocked.
 - The five hazards the pipeline already found are in the app's hazard map. Check each against the video: a real one gets a `hazard` row, and if it is wrong, just leave it out.
+
+## Caveat: IMG_6513 labels are not independent
+
+The IMG_6513 rows (H2 to H5, debris on the shoulder) were written after the user confirmed the pipeline's own findings were correct, with short windows around each spot. They were not found by watching the whole drive. So for IMG_6513 the debris numbers show that those four findings were real (precision), not how many hazards the pipeline missed: recall is 100% by construction and must not be quoted as a measured recall. A real recall needs hazards labelled without looking at the pipeline's output first (the pothole at 8:47 in IMG_6511 is one, and it was missed). There are no clean segments yet, so false alarms per hour are not measured.

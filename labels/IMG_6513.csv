@@ -1,4 +1,8 @@
 row_type,segment_id,start,end,class,severity,hazard_id,note
-segment,A,00:00,02:30,,,,EXAMPLE ROW: replace with a real 2-3 minute stretch
-hazard,A,01:12,01:16,debris in lane,1,H1,EXAMPLE ROW: tipped orange barrel on the right shoulder
-segment,B,10:00,12:30,,,,EXAMPLE ROW: a stretch with nothing on the road (clean)
+segment,A,23:35,23:50,,,,short window around a spot the pipeline flagged; user confirmed the finding is correct
+hazard,A,23:42,23:43,debris in lane,1,H2,dark tire-like object on the left shoulder; confirmed by the user; the pipeline put it on the shoulder
+segment,B,32:05,32:40,,,,short window around two spots the pipeline flagged; user confirmed the findings are correct
+hazard,B,32:11,32:13,debris in lane,1,H3,dark tire-like object on the right shoulder; confirmed by the user
+hazard,B,32:31,32:33,debris in lane,1,H4,tipped orange construction barrel on the right shoulder; confirmed by the user
+segment,C,34:55,35:08,,,,short window around a spot the pipeline flagged; user confirmed the finding is correct
+hazard,C,35:00,35:01,debris in lane,1,H5,small dark object on the right shoulder; confirmed by the user
