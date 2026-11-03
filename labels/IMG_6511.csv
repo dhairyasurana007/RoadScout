@@ -1,3 +1,3 @@
 row_type,segment_id,start,end,class,severity,hazard_id,note
-segment,A,00:00,02:30,,,,EXAMPLE ROW: replace with a real 2-3 minute stretch
-hazard,A,01:12,01:16,debris in lane,1,H1,EXAMPLE ROW: replace or delete
+segment,A,08:40,08:55,,,,short window around the pothole the user reported at 8:47
+hazard,A,08:46,08:48,pothole,2,H1,reported by the user at 8:47; severity is a placeholder until they say otherwise
