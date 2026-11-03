@@ -35,7 +35,7 @@ Reporting a road hazard to VDOT (Virginia) or MDOT SHA (Maryland) means noticing
 
 ## What we measured
 
-From `docs/eval-report.md` (hand labels in `labels/`): of the 12 SAM detections inside the labelled windows, Muse Spark kept 5, all four confirmed debris spots (the barrel was seen twice), and removed 7, none of them a labelled hazard. Cost was about `$0.28` per minute of video (`$9.65` detection, `$4.15` verification for 49 minutes). Not measured: recall (the IMG_6513 labels came from the pipeline's own findings, so they are not independent), false alarms per hour (no clean stretches were labelled), and review precision (the 5 hazards have not been approved or rejected yet).
+From `docs/eval-report.md` (hand labels in `labels/`): of the 12 SAM detections inside the labelled windows, Muse Spark kept 5, all four confirmed debris spots (the barrel was seen twice), and removed 7, none of them a labelled hazard. Cost was about `$0.28` per minute of video (`$9.65` detection, `$4.15` verification for 49 minutes). Not measured: recall (the IMG_6513 labels came from the pipeline's own findings, so they are not independent), false alarms per hour (no clean stretches were labelled), and independent review precision. In review, all 5 verified hazards were approved (5 of 5), but the tipped barrel was reported twice about 40 m apart, so they are 4 distinct hazards; the prefilled MDOT SHA report works on this real data.
 
 Real run on two commutes (about 49 minutes of video, Maryland and Virginia): 512 candidates found by SAM 3.1, 5 confirmed as hazards by Muse Spark (debris on the shoulder), 0 on the second drive. Cost about `$14` for those runs.
 

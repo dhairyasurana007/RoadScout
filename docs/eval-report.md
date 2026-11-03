@@ -39,15 +39,14 @@ False alarms per hour: not measured (no clean segments).
 | class | approved | rejected | precision |
 | --- | ---: | ---: | ---: |
 | pothole | 0 | 0 | n/a |
-| debris in lane | 0 | 0 | n/a |
+| debris in lane | 5 | 0 | 100.0% |
 | damaged guardrail | 0 | 0 | n/a |
 | fallen or damaged sign | 0 | 0 | n/a |
 | faded lane markings | 0 | 0 | n/a |
-| overall | 0 | 0 | n/a |
+| overall | 5 | 0 | 100.0% |
 
-Not reviewed (new, left out of the precision): 5
+Not reviewed (new, left out of the precision): 0
 Rejected hazards per hour of video: 0.00
-Review precision: not measured (no approved or rejected hazards).
 
 ## Dedup accuracy (hazards seen on repeated drives)
 
