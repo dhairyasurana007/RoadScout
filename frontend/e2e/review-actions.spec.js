@@ -110,6 +110,23 @@ const item = (page, id) => page.locator(`[data-testid="hazard-list-item"][data-h
 const items = (page) => page.getByTestId("hazard-list-item");
 const pin = (page, id) => page.locator(`[data-testid="hazard-pin"][data-hazard-id="${id}"]`);
 const pins = (page) => page.getByTestId("hazard-pin");
+
+/**
+ * Is the element's box fully inside the map container's box? The page viewport is not used: an open popup makes
+ * Leaflet pan the map so the popup fits, which can leave the pin near the bottom of the map, below the page fold
+ * at a small viewport.
+ */
+async function insideMap(page, locator) {
+  const outer = await page.getByTestId("hazard-map").boundingBox();
+  const inner = await locator.boundingBox();
+  if (!outer || !inner) return false;
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
 const popup = (page) => page.locator(".leaflet-popup").getByTestId("hazard-popup");
 
 async function openMap(page, ctl) {
@@ -219,7 +236,7 @@ test("a review keeps the selection, the zoom and the count, and does not reload 
   await expect(popup(page)).toHaveAttribute("data-hazard-id", "2"); // the popup stayed open
   await expect(page.getByTestId("hazard-map-count")).toHaveText("4 hazards");
   await expect(page.getByTestId("hazard-map")).toHaveAttribute("data-map-zoom", zoom); // no re-fit, no zoom change
-  await expect(pin(page, 2)).toBeInViewport();
+  await expect.poll(() => insideMap(page, pin(page, 2))).toBe(true); // the pin is still on the map
   expect(ctl.queries.length).toBe(gets);
 });
 

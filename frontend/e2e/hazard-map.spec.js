@@ -162,6 +162,18 @@ async function insideMap(page, locator) {
   );
 }
 
+/**
+ * Is the element at least `ratio` visible inside the hazard list's own scroll box? (The page viewport is not used:
+ * where the page fold falls depends on the viewport size and on how far the page scrolled.)
+ */
+async function visibleInList(page, locator, ratio = 0.9) {
+  const outer = await page.getByTestId("hazard-map-list").boundingBox();
+  const inner = await locator.boundingBox();
+  if (!outer || !inner || inner.height <= 0) return false;
+  const visible = Math.min(inner.y + inner.height, outer.y + outer.height) - Math.max(inner.y, outer.y);
+  return visible >= inner.height * ratio;
+}
+
 // ----- navigation and the map shell ----------------------------------------------------------------
 
 test("the upload page is the default view and the map is a separate section", async ({ page }) => {
@@ -404,7 +416,7 @@ test("clicking a pin scrolls its list item into view", async ({ page }) => {
 
   await pin(page, 14).click();
   await expect(target).toHaveAttribute("data-selected", "true");
-  await expect(target).toBeInViewport({ ratio: 0.9 });
+  await expect.poll(() => visibleInList(page, target)).toBe(true); // scrolled into the list's visible area
   expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
@@ -422,8 +434,8 @@ test("clicking a list item pans and zooms to its pin and opens the popup", async
   await expect.poll(async () => Number(await mapBox(page).getAttribute("data-map-zoom"))).toBeGreaterThanOrEqual(15);
   await expect(popup(page).getByTestId("hazard-popup")).toHaveAttribute("data-hazard-id", "3");
   await expect.poll(() => insideMap(page, pin(page, 3))).toBe(true);
-  // zoomed in on hazard 3, so the others (about a kilometre away) are off the map
-  await expect(pin(page, 3)).toBeInViewport();
+  // zoomed in on hazard 3 (the check above: its pin is inside the map box), so the others (about a kilometre away)
+  // are off the map
   // the map is now centred close to hazard 3 (the popup may nudge it a little)
   const lat = Number(await mapBox(page).getAttribute("data-map-lat"));
   const lon = Number(await mapBox(page).getAttribute("data-map-lon"));
@@ -448,7 +460,7 @@ test("clicking the selected list item again re-centres on it after the map was m
   const ctl = await mockMap(page, THREE);
   await openMap(page, ctl);
   await item(page, 1).click();
-  await expect(pin(page, 1)).toBeInViewport();
+  await expect.poll(() => insideMap(page, pin(page, 1))).toBe(true);
   await page.getByRole("button", { name: "Zoom out" }).click();
   await page.getByRole("button", { name: "Zoom out" }).click();
   const zoomedOut = Number(await mapBox(page).getAttribute("data-map-zoom"));
