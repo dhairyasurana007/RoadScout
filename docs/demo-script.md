@@ -1,6 +1,6 @@
 # Demo script (about 3 minutes)
 
-Record this on your own machine with the local build, on the real blurred results. Everything shown is blurred; never open a raw frame on camera. Say only what the numbers support: no potholes were found in the footage, so do not claim pothole detection.
+Record this on your own machine with the local build, on the real blurred results. Everything shown is blurred; never open a raw frame on camera. Say only what the numbers support: the one known pothole in the footage was missed by the pipeline, so do not claim pothole detection.
 
 **Before recording**
 - Backend on port 8000 and frontend on port 5173 running (see `README.md`, "Run").
@@ -26,7 +26,7 @@ Click Prefilled report on an approved hazard. Show the agency chosen from the lo
 
 **6. Honest results and what's next (25 s)**
 - Say what was measured: the review-based precision from your approvals, and the eval table if you have labels.
-- Say what was not: no potholes in this footage, recall depends on hand labels.
+- Say what was not: the one known pothole (heavy cracking around it) was missed, and recall for the other classes depends on hand labels.
 - Next steps: on-device detection for real-time alerts with cloud verification, denser GPS tracks for better placement.
 
 **Tips**

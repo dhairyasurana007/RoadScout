@@ -19,7 +19,7 @@ Deterministic code does the heavy lifting; a model is called only for detection,
 
 **What it did on real footage** (two dashcam drives, about 49 minutes, live Meta models, details in `docs/spike-notes.md`): 512 candidates, 5 verified hazards, all low-severity debris on the shoulder (tire-like objects and a tipped construction barrel). The blurred photos match the verdicts. About $14 of Meta API spend for both drives.
 
-**What it has not shown yet.** There were no potholes in the recorded footage, so pothole detection is untested. Recall is unmeasured until hand labels exist (`labels/README.md`; run `python scripts/eval.py`). GPS positions are rough when the track is sparse (Google Timeline gives about one point per minute, so one hazard can appear twice about 40 m apart).
+**What it has not shown yet.** The recorded footage holds one known pothole (IMG_6511 at 8:47, among heavy cracking) and the pipeline missed it: SAM 3.1 boxed it in a single sampled frame, the three-frame minimum track length dropped it, and Muse Spark read it as a manhole cover when tested directly, so pothole recall is 0 of 1 and one example proves little. Recall for the other classes is unmeasured until hand labels exist (`labels/README.md`; run `python scripts/eval.py`). GPS positions are rough when the track is sparse (Google Timeline gives about one point per minute, so one hazard can appear twice about 40 m apart).
 
 **Privacy.** Audio is stripped. Unblurred frames stay on your machine; the only exception is the Muse Spark verification call. The review screen, reports and any hosted demo use blurred images only. A Delete video button removes the raw video and extracted frames.
 

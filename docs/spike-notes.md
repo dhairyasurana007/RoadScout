@@ -69,3 +69,15 @@ Two drives with Google Maps Timeline on, converted to GPX with `spike/timeline_t
 - A done drive with a skip-warning cannot retry only its skipped candidates yet.
 - Muse Spark reasoning tokens dominate its cost; a lower reasoning effort setting was not tried.
 - Export blur coverage: SAM omits frames with no match, so the export cannot tell a frame with nothing to blur from a missed face or plate. Plan a conservative blur (hold masks across short gaps) before the export is used for anything shared.
+
+## Pothole check (2026-11-03)
+
+The user labelled a pothole in IMG_6511 at 8:47 (heavy cracking around it). The pipeline reported nothing there. A 30 s clip around it (8:32 to 9:02, 3 fps, 90 frames, about $0.02 per phrasing) was run with six SAM 3.1 phrasings:
+
+| phrase | result |
+|---|---|
+| "pothole", "large pothole", "broken pavement", "road surface damage" | no tracks |
+| "hole in the road" | 2 one-frame tracks, one at 8:47.7 (confidence 0.84) |
+| "pothole in the road surface" | 5 short tracks, one at 8:47.7 (confidence 0.86) |
+
+So SAM 3.1 did see it, in a single sampled frame. The pipeline's minimum track length (`ROADSCOUT_MIN_TRACK_FRAMES`, default 3) dropped it. A pothole near the bumper is only in view for about one frame at 3 fps. Sending that frame and its crop to Muse Spark with prompt v2 gave `is_hazard: false`, confidence 0.15 ("distant spot looks like flat manhole cover"), so a lower minimum track length alone would not have reported it. One example, not a rate; no change to the defaults was made. Frames stay local and are not committed.

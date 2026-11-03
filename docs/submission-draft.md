@@ -41,7 +41,7 @@ Real run on two commutes (about 49 minutes of video, Maryland and Virginia): 512
 
 ## Honest limitations
 
-- **No potholes were found** because none were in our footage. We do not claim pothole detection.
+- **Our one known pothole was missed.** It is a small pothole among heavy cracking (IMG_6511, 8:47). SAM 3.1 boxed it in a single sampled frame, our three-frame minimum track length dropped it, and Muse Spark read it as a manhole cover when tested directly. One example proves little, but we do not claim pothole detection.
 - The verifier sometimes accepts an object on the shoulder as "debris in lane". [State here whether the tightened verification prompt fixed this, and by how much.]
 - Phone GPS from a timeline export is coarse (about one point a minute), so a hazard's position can be off by tens of metres. Hazards seen twice can fail to merge.
 - The VDOT report form is a JavaScript app, so its field names are not verified; the MDOT SHA fields come from the live form.
