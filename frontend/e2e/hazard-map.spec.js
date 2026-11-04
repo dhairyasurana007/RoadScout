@@ -41,7 +41,7 @@ function makePng(width, height, [r, g, b]) {
 }
 
 const TILE = makePng(256, 256, [220, 225, 215]);
-const TILE_URL = /^https:\/\/[a-d]\.basemaps\.cartocdn\.com\/rastertiles\/voyager\/\d+\/\d+\/\d+(@2x)?\.png$/; // the basemap
+const TILE_URL = /^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/; // the basemap
 const PHOTO = makePng(16, 12, [90, 90, 100]); // stands in for a blurred photo
 
 // ----- fixtures --------------------------------------------------------------------------------------
@@ -204,15 +204,13 @@ test("#map opens the map view directly", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Upload a drive" })).toHaveCount(0);
 });
 
-test("the map shows CARTO Voyager tiles (OpenStreetMap data) with both attributions, all served by the mocked tile route", async ({
+test("the map shows OpenStreetMap tiles with the required attribution, all served by the mocked tile route", async ({
   page,
 }) => {
   const ctl = await mockMap(page, THREE);
   await openMap(page, ctl);
   await expect(page.locator(".leaflet-control-attribution")).toContainText("© OpenStreetMap contributors");
   await expect(page.locator(".leaflet-control-attribution a[href*='openstreetmap.org/copyright']")).toBeVisible();
-  await expect(page.locator(".leaflet-control-attribution")).toContainText("CARTO");
-  await expect(page.locator(".leaflet-control-attribution a[href*='carto.com/attributions']")).toBeVisible();
   await expect(page.locator(".leaflet-tile-loaded").first()).toBeAttached(); // the generated PNG decoded as a tile
   expect(ctl.tiles.length).toBeGreaterThan(0);
   for (const url of ctl.tiles) expect(url).toMatch(TILE_URL);

@@ -11,11 +11,9 @@ import { ClassIcon, Icon, SeverityMeter } from "./icons.jsx";
 export const DEFAULT_CENTER = [38.9, -77.2];
 export const DEFAULT_ZOOM = 9;
 const LIST_ZOOM = 15; // zoom used when a list item is clicked
-// CARTO Voyager raster tiles (a calm, light basemap built on OpenStreetMap data); both attributions are required.
-const TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-const TILE_SUBDOMAINS = "abcd";
-const ATTRIBUTION =
-  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>';
+// OpenStreetMap standard tiles. (CARTO's free raster tiles now answer "API KEY REQUIRED", so they are not used.)
+const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const FIT_PADDING = [56, 56]; // pixels kept free around the pins when the map fits them
 const FIT_MAX_ZOOM = 16; // a single hazard (or a tight cluster) is shown at street level, not zoomed to the pavement
 
@@ -451,7 +449,7 @@ export default function HazardMap() {
       zoomAnimation: false,
       markerZoomAnimation: false,
     });
-    L.tileLayer(TILE_URL, { maxZoom: 19, subdomains: TILE_SUBDOMAINS, attribution: ATTRIBUTION }).addTo(map);
+    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
     const sync = () => {
       const c = map.getCenter();
       setView({ lat: c.lat, lon: c.lng, zoom: map.getZoom() });
