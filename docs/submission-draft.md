@@ -6,6 +6,10 @@ Draft written before the hackathon's submission rules were seen. Rewrite the hea
 
 A phone on your dashboard records your commute; RoadScout finds road hazards in the video, pins them on a map with a blurred photo, and prefills the state report so you only have to review and submit it.
 
+## Try it
+
+Live read-only demo: https://roadscout-demo.onrender.com/ (open the Hazard map tab: 5 approved hazards from a real drive, blurred photos, and a prefilled MDOT SHA report for each). It runs on a free Render service, so the first request after a quiet spell takes about a minute to wake up.
+
 ## The problem
 
 Reporting a road hazard to VDOT (Virginia) or MDOT SHA (Maryland) means noticing it, remembering where it was, finding the right form, and typing it all in. Most drivers never do. Agencies learn about hazards late, from complaints, instead of from the thousands of people who drive past them every day.
