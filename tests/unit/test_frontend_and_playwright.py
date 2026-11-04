@@ -60,9 +60,10 @@ def test_entrypoint_renders_app(fe):
     assert "App" in text
 
 
-def test_hello_world_page_exists(fe):
+def test_app_page_exists(fe):
+    # was "hello-world page exists"; the placeholder tagline was replaced on 2026-11-04, so check the app name instead
     srcs = [p for p in walk_files(fe / "src", (".jsx", ".tsx", ".js", ".ts"))]
-    assert any(re.search(r"hello", read(p), re.I) for p in srcs), "no 'hello' text in src/"
+    assert any("RoadScout" in read(p) for p in srcs), "no 'RoadScout' text in src/"
     apps = [p for p in srcs if re.fullmatch(r"App\.(jsx|tsx|js|ts)", p.name)]
     assert apps, "src/App.(jsx|tsx) missing"
 
@@ -152,22 +153,22 @@ def test_exactly_one_playwright_test_case():
     assert len(cases) == 1, f"expected one test(), found {len(cases)}"
 
 
-def test_smoke_test_visits_page_and_asserts_hello(fe):
+def test_smoke_test_visits_page_and_asserts_text(fe):
     text = read(_smoke_spec())
     assert "goto" in text
     assert "expect" in text
-    assert re.search(r"hello", text, re.I)
+    assert re.search(r"getByText|getByRole|toHaveTitle", text), "the smoke test asserts nothing about the page"
 
 
 def test_smoke_test_text_matches_the_page(fe):
-    """Any hello-ish literal asserted by the spec must exist in the frontend source."""
+    """Every text the spec looks for with getByText must exist in the frontend source."""
     spec = read(_smoke_spec())
-    literals = re.findall(r"['\"`]([^'\"`\n]*hello[^'\"`\n]*)['\"`]", spec, re.I)
-    if not literals:
-        literals = ["hello"]
+    literals = re.findall(r"getByText\(\s*['\"`]([^'\"`\n]+)['\"`]", spec)
+    assert literals, "the smoke test does not look for any text on the page"
     src_blob = "\n".join(read(p) for p in walk_files(fe / "src")).lower()
     html = read(fe / "index.html").lower()
-    assert any(l.lower() in src_blob or l.lower() in html for l in literals), literals
+    missing = [l for l in literals if l.lower() not in src_blob and l.lower() not in html]
+    assert not missing, missing
 
 
 def test_playwright_spec_is_not_in_python_unit_test_dir():
