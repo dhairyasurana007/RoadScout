@@ -21,6 +21,12 @@ spike/footage/
 *.sqlite3
 *.db
 
+# Exception, decided by the user on 2026-11-03: the hosted demo dataset (privacy-blurred JPEGs and a stripped
+# database), built only by scripts/build_demo_dataset.py and guarded by tests. Nothing else is un-ignored.
+!demo/
+!demo/demo.sqlite
+!demo/storage/
+
 # Hidden tester tests live outside the repo; guard against a stray copy
 roadscout-hidden-tests/
 

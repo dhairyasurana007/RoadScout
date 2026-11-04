@@ -32,7 +32,7 @@ Task 0 (preflight) and the footage spike in task 26 are done by the main agent w
 - One task = one commit. Do not bundle tasks.
 - CI runs against the fake provider and recorded fixtures, never the live Meta API. Live calls only in manual runs.
 - Tests use short synthetic clips generated with ffmpeg, never real footage.
-- Never commit secrets, real dashcam video, real GPX tracks, extracted frames, or unblurred images. `.gitignore` covers these; do not work around it.
+- Never commit secrets, real dashcam video, real GPX tracks, extracted frames, or unblurred images. `.gitignore` covers these; do not work around it. One exception, decided by the user on 2026-11-03: the `demo/` folder holds the hosted demo dataset (privacy-blurred JPEGs and a stripped database), built only by `scripts/build_demo_dataset.py` and guarded by tests; `.gitignore` has explicit exceptions for exactly those paths.
 - Unblurred frames stay on the user's machine (the only exception is the Muse Spark verification call). The hosted demo (task 23) serves blurred images only.
 - Never auto-submit anything to VDOT or MDOT SHA.
 - Never paste or print `META_API_KEY`. It lives in a git-ignored `.env`.

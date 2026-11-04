@@ -1,4 +1,6 @@
 # Render blueprint for the read-only RoadScout demo. The server never calls the Meta API.
+# Free plan: the service sleeps after 15 minutes without traffic and takes about a minute to wake up.
+# It deploys only after the GitHub checks (CI) pass on a push.
 services:
   - type: web
     name: roadscout-demo
@@ -6,7 +8,9 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free
+    region: virginia
     healthCheckPath: /health
+    autoDeployTrigger: checksPass
     envVars:
       - key: ROADSCOUT_DEMO
         value: "1"
