@@ -53,7 +53,7 @@ const fresh = () => [
  */
 async function mockApi(page, items = fresh()) {
   const ctl = { items, patches: [], queries: [], reportGets: [], reportRespond: null };
-  await page.route(/openstreetmap\.org/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
+  await page.route(/openstreetmap\.org|cartocdn\.com/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
   await page.route(
     (url) => url.pathname === "/api/hazards",
     (route) => {

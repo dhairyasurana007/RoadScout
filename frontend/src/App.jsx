@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import HazardMap from "./HazardMap.jsx";
 import { DEMO_BANNER_TEXT, DemoContext, useDemoStatus } from "./demo.jsx";
+import { ClassIcon, Icon, SeverityMeter } from "./icons.jsx";
 
 const DEFAULT_POLL_MS = 1500;
 
@@ -55,11 +56,15 @@ function HazardCard({ hazard }) {
       <dl>
         <dt>Class</dt>
         <dd data-testid="hazard-class">
-          <span className="rs-pill">{hazard.hazard_class}</span>
+          <span className="rs-pill">
+            <ClassIcon hazardClass={hazard.hazard_class} />
+            {hazard.hazard_class}
+          </span>
         </dd>
         <dt>Severity</dt>
         <dd data-testid="hazard-severity">
           <span className="rs-pill rs-sev" data-severity={hazard.severity}>
+            <SeverityMeter level={hazard.severity} />
             {severityText(hazard.severity)}
           </span>
         </dd>
@@ -87,7 +92,10 @@ function Hazards({ hazards }) {
       </p>
     );
   if (hazards.state !== "ready") return null;
-  if (hazards.items.length === 0) return <p data-testid="hazards-empty" className="rs-empty">No verified hazards</p>;
+  if (hazards.items.length === 0) return <p data-testid="hazards-empty" className="rs-empty">
+        <Icon name="inbox" size={28} />
+        No verified hazards
+      </p>;
   return (
     <>
       <p data-testid="hazard-count" className="rs-count">
@@ -104,7 +112,7 @@ function Hazards({ hazards }) {
 
 // A file field styled as a drop target. The native <input type="file"> still receives the drop; this only adds the
 // drag-over highlight.
-function DropField({ children }) {
+function DropField({ children, icon, hint }) {
   const [over, setOver] = useState(false);
   return (
     <label
@@ -115,7 +123,11 @@ function DropField({ children }) {
       onDragLeave={() => setOver(false)}
       onDrop={() => setOver(false)}
     >
+      <span className="rs-drop-icon">
+        <Icon name={icon} size={24} />
+      </span>
       {children}
+      <span className="rs-drop-hint">{hint}</span>
     </label>
   );
 }
@@ -123,13 +135,13 @@ function DropField({ children }) {
 // Visual only (hidden from assistive technology): the pipeline stages as a row of steps. The stage name itself is in
 // the "Stage" text of the drive panel.
 const STEP_LABELS = [
-  ["preprocessing", "Prepare"],
-  ["detecting", "Detect"],
-  ["aggregating", "Group"],
-  ["verifying", "Verify"],
-  ["blurring", "Blur"],
-  ["deduplicating", "Merge"],
-  ["checking_fixes", "Recheck"],
+  ["preprocessing", "Prepare", "scissors"],
+  ["detecting", "Detect", "scan"],
+  ["aggregating", "Group", "group"],
+  ["verifying", "Verify", "shield"],
+  ["blurring", "Blur", "blur"],
+  ["deduplicating", "Merge", "merge"],
+  ["checking_fixes", "Recheck", "refresh"],
 ];
 
 function StageSteps({ drive }) {
@@ -138,13 +150,19 @@ function StageSteps({ drive }) {
   const active = drive.status === "failed" ? names.indexOf(drive.failed_stage) : names.indexOf(drive.stage);
   return (
     <ol className="rs-steps" aria-hidden="true">
-      {STEP_LABELS.map(([name, label], i) => {
+      {STEP_LABELS.map(([name, label, icon], i) => {
         let state = "todo";
         if (drive.status === "done") state = "done";
         else if (active >= 0 && i < active) state = "done";
         else if (active === i) state = drive.status === "failed" ? "failed" : "current";
         else if (active < 0 && drive.status === "processing" && i === 0) state = "current";
-        return <li key={name} className="rs-step" data-step={state} data-label={label} />;
+        return (
+          <li key={name} className="rs-step" data-step={state} data-label={label}>
+            <span className="rs-step-node">
+              <Icon name={state === "done" ? "check" : state === "failed" ? "alert" : icon} size={18} />
+            </span>
+          </li>
+        );
       })}
     </ol>
   );
@@ -432,7 +450,7 @@ export default function App() {
       <header className="rs-topbar">
         <div className="rs-brand">
           <h1>RoadScout</h1>
-          <p className="rs-tagline">Hello, world. Road hazard scouting starts here.</p>
+          <p className="rs-tagline">Road hazards, found from your commute video.</p>
         </div>
         <nav aria-label="Views" className="rs-tabs">
           <button
@@ -448,29 +466,61 @@ export default function App() {
           </button>
         </nav>
       </header>
-      {demo && (
-        <p role="status" data-testid="demo-banner" className="rs-banner">
-          {DEMO_BANNER_TEXT}
+      <div className="rs-statusbar">
+        {demo && (
+          <p role="status" data-testid="demo-banner" className="rs-chip rs-chip--demo">
+            <Icon name="eye" size={14} />
+            {DEMO_BANNER_TEXT}
+          </p>
+        )}
+        <p role="note" data-testid="privacy-note" className="rs-chip">
+          <Icon name="shield" size={14} />
+          <span>
+            Photos shown here are privacy-blurred (faces and license plates).{" "}
+            {demo
+              ? "No raw video is stored on this demo server."
+              : "The raw video stays on this machine until you delete it."}
+          </span>
         </p>
-      )}
-      <p role="note" data-testid="privacy-note" className="rs-note">
-        Photos shown here are privacy-blurred (faces and license plates).{" "}
-        {demo
-          ? "No raw video is stored on this demo server."
-          : "The raw video stays on this machine until you delete it."}
-      </p>
+      </div>
 
 
       {tab === "map" ? (
         <HazardMap />
       ) : (
-        <div className="rs-page">
+        <div className={demo ? "rs-page" : "rs-page rs-upload-grid"}>
           {!demo && (
             <div className="rs-card">
-          <h2>Upload a drive</h2>
+          <div className="rs-card-head">
+            <span className="rs-card-icon">
+              <Icon name="upload" size={20} />
+            </span>
+            <h2>Upload a drive</h2>
+          </div>
+          <ol className="rs-flow" aria-hidden="true">
+            <li className="rs-flow-step" data-label="Choose files" data-state={(video && gpx) || drive ? "done" : "current"}>
+              <span className="rs-flow-icon">
+                <Icon name={(video && gpx) || drive ? "check" : "video"} size={16} />
+              </span>
+            </li>
+            <li className="rs-flow-step" data-label="Upload" data-state={busy ? "current" : drive ? "done" : "todo"}>
+              <span className="rs-flow-icon">
+                <Icon name={drive ? "check" : "upload"} size={16} />
+              </span>
+            </li>
+            <li
+              className="rs-flow-step"
+              data-label="Process"
+              data-state={processing ? "current" : drive?.status === "done" ? "done" : "todo"}
+            >
+              <span className="rs-flow-icon">
+                <Icon name={drive?.status === "done" ? "check" : "scan"} size={16} />
+              </span>
+            </li>
+          </ol>
           <form onSubmit={onSubmit} className="rs-form">
             <div className="rs-dropzones">
-              <DropField>
+              <DropField icon="video" hint="MOV, MP4 or MKV from your dashcam or phone">
                 Video file
                 <br />
                 <input
@@ -479,7 +529,7 @@ export default function App() {
                   onChange={(e) => setVideo(e.target.files[0] ?? null)}
                 />
               </DropField>
-              <DropField>
+              <DropField icon="route" hint="The GPS track recorded for the same drive">
                 GPX file
                 <br />
                 <input
@@ -513,8 +563,14 @@ export default function App() {
             </div>
           )}
 
+          <div className="rs-upload-side">
           <div className="rs-card">
-          <h2>Open an existing drive</h2>
+          <div className="rs-card-head">
+            <span className="rs-card-icon">
+              <Icon name="layers" size={20} />
+            </span>
+            <h2>Open an existing drive</h2>
+          </div>
           <form onSubmit={onLoad} className="rs-load-form">
             <label>
               Drive ID
@@ -530,6 +586,7 @@ export default function App() {
               {loading ? "Loading..." : "Open drive"}
             </button>
           </form>
+          </div>
           </div>
 
           {error && (

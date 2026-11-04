@@ -54,7 +54,7 @@ function gate() {
  */
 async function mockApi(page, items = fresh()) {
   const ctl = { items, patches: [], queries: [], patchRespond: null, getRespond: null };
-  await page.route(/openstreetmap\.org/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
+  await page.route(/openstreetmap\.org|cartocdn\.com/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
   await page.route(
     (url) => url.pathname === "/api/hazards",
     async (route) => {

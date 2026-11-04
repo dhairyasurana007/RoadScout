@@ -98,7 +98,7 @@ async function mockApi(page, demo) {
       ctl.writes.push(`${request.method()} ${url.pathname}`);
     }
   });
-  await page.route(/openstreetmap\.org/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
+  await page.route(/openstreetmap\.org|cartocdn\.com/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
   await page.route(
     (url) => url.pathname === "/api/demo",
     (route) => {

@@ -5,13 +5,19 @@ import "leaflet/dist/leaflet.css";
 import "./HazardMap.css";
 import ReportPanel from "./ReportPanel.jsx";
 import { useDemo } from "./demo.jsx";
+import { ClassIcon, Icon, SeverityMeter } from "./icons.jsx";
 
 // Northern Virginia / Maryland commute area, shown when there is nothing to fit.
 export const DEFAULT_CENTER = [38.9, -77.2];
 export const DEFAULT_ZOOM = 9;
 const LIST_ZOOM = 15; // zoom used when a list item is clicked
-const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+// CARTO Voyager raster tiles (a calm, light basemap built on OpenStreetMap data); both attributions are required.
+const TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const TILE_SUBDOMAINS = "abcd";
+const ATTRIBUTION =
+  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>';
+const FIT_PADDING = [56, 56]; // pixels kept free around the pins when the map fits them
+const FIT_MAX_ZOOM = 16; // a single hazard (or a tight cluster) is shown at street level, not zoomed to the pavement
 
 export const STATUSES = ["new", "approved", "rejected", "reported", "possibly_fixed"];
 const STATUS_LABELS = {
@@ -42,8 +48,35 @@ function pinIcon(hazard, selected) {
   const html =
     `<span class="rs-pin" data-testid="hazard-pin" data-hazard-id="${Number(hazard.id)}"` +
     ` data-status="${cssToken(hazard.status)}"` +
+    ` data-severity="${Number(hazard.severity) || 0}"` +
     ` data-selected="${selected}">${Number(hazard.severity) || ""}</span>`;
-  return L.divIcon({ className: "rs-pin-icon", html, iconSize: [28, 28], iconAnchor: [14, 14] });
+  return L.divIcon({ className: "rs-pin-icon", html, iconSize: [32, 32], iconAnchor: [16, 16] });
+}
+
+// Small count cards above the map, worked out from the hazards already loaded (no extra request).
+function StatStrip({ items }) {
+  const approved = items.filter((h) => h.status === "approved" || h.status === "reported").length;
+  const toReview = items.filter((h) => h.status === "new").length;
+  const sightings = items.reduce((sum, h) => sum + (Number(h.sightings) || 0), 0);
+  const cards = [
+    ["Hazards", items.length, "pin", "primary"],
+    ["Approved", approved, "check", "success"],
+    ["To review", toReview, "eye", "warning"],
+    ["Sightings", sightings, "layers", "muted"],
+  ];
+  return (
+    <div className="rs-stats" data-testid="hazard-map-stats">
+      {cards.map(([label, value, icon, tone]) => (
+        <div className="rs-stat-card" data-tone={tone} key={label}>
+          <span className="rs-stat-icon">
+            <Icon name={icon} size={18} />
+          </span>
+          <span className="rs-stat-value">{value}</span>
+          <span className="rs-stat-label">{label}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // Keep an existing pin in step with its hazard without rebuilding it (so an open popup stays open).
@@ -51,6 +84,7 @@ function syncPin(marker, hazard, selected) {
   const el = marker.getElement()?.querySelector("[data-hazard-id]");
   if (!el) return;
   el.dataset.status = cssToken(hazard.status);
+  el.dataset.severity = String(Number(hazard.severity) || 0);
   el.dataset.selected = String(selected);
   const label = String(Number(hazard.severity) || "");
   if (el.textContent !== label) el.textContent = label;
@@ -309,9 +343,13 @@ function PopupContent({ hazard, ctx }) {
   const [photoFailed, setPhotoFailed] = useState(false);
   return (
     <div className="rs-popup" data-testid="hazard-popup" data-hazard-id={String(hazard.id)}>
-      <strong data-testid="hazard-popup-class" className="rs-pill">{hazard.hazard_class}</strong>
+      <strong data-testid="hazard-popup-class" className="rs-pill">
+        <ClassIcon hazardClass={hazard.hazard_class} />
+        {hazard.hazard_class}
+      </strong>
       {hazard.class_edited && <EditedMark testid="hazard-popup-class-edited" was={hazard.original_hazard_class} />}
       <div data-testid="hazard-popup-severity" data-severity={hazard.severity} className="rs-popup-row">
+        <SeverityMeter level={hazard.severity} />
         Severity: {severityText(hazard.severity)}
         {hazard.severity_edited && <EditedMark testid="hazard-popup-severity-edited" was={hazard.original_severity} />}
       </div>
@@ -356,6 +394,19 @@ function Thumb({ hazard }) {
   );
 }
 
+// Fit the map to every pin (with padding and a sensible maximum zoom), or show the default area when there is none.
+function fitPins(map, markerMap, sizeRef, pointList) {
+  map.invalidateSize({ animate: false }); // fit against the real size, not the size the map had when it was created
+  const points = pointList ?? [...markerMap.values()].map((m) => m.getLatLng());
+  if (points.length > 0) {
+    map.fitBounds(L.latLngBounds(points), { padding: FIT_PADDING, maxZoom: FIT_MAX_ZOOM, animate: false });
+  } else {
+    map.setView(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: false });
+  }
+  const size = map.getSize();
+  sizeRef.current = [size.x, size.y];
+}
+
 export default function HazardMap() {
   const [data, setData] = useState({ state: "loading", items: [], message: "" });
   const [filter, setFilter] = useState("");
@@ -375,6 +426,8 @@ export default function HazardMap() {
   const hosts = useRef(new Map()); // hazard id -> { el, observer }: the element a pin's popup shows
   const itemEls = useRef(new Map()); // hazard id -> <li>
   const refitNext = useRef(true); // fit the pins on the next load (first load and filter changes)
+  const userMoved = useRef(false); // the user panned, zoomed or picked a hazard: the map is no longer re-fitted by itself
+  const fitSize = useRef([0, 0]); // the map's size when the pins were last fitted
   const selectedIdRef = useRef(null); // the selected hazard id, readable inside effects that must not re-run on it
   const filterRef = useRef("");
   const staleReload = useRef(false); // a list reply was dropped as stale: reload once the reviews have settled
@@ -398,7 +451,7 @@ export default function HazardMap() {
       zoomAnimation: false,
       markerZoomAnimation: false,
     });
-    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+    L.tileLayer(TILE_URL, { maxZoom: 19, subdomains: TILE_SUBDOMAINS, attribution: ATTRIBUTION }).addTo(map);
     const sync = () => {
       const c = map.getCenter();
       setView({ lat: c.lat, lon: c.lng, zoom: map.getZoom() });
@@ -406,12 +459,25 @@ export default function HazardMap() {
     map.on("moveend zoomend", sync);
     map.on("click", () => setSelection((s) => (s.id === null ? s : { id: null, source: "map", n: s.n + 1 })));
     mapRef.current = map;
+    const container = containerRef.current;
+    const touched = () => {
+      userMoved.current = true;
+    };
+    for (const type of ["pointerdown", "wheel", "keydown"]) container.addEventListener(type, touched, { passive: true });
     let observer = null;
     if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => map.invalidateSize());
-      observer.observe(containerRef.current);
+      observer = new ResizeObserver(() => {
+        map.invalidateSize();
+        // The pins were fitted while the map still had another size (first paint, scrollbar, layout): fit again.
+        const [w, h] = fitSize.current;
+        if (!userMoved.current && w > 0 && (Math.abs(container.clientWidth - w) > 8 || Math.abs(container.clientHeight - h) > 8)) {
+          fitPins(map, markers.current, fitSize);
+        }
+      });
+      observer.observe(container);
     }
     return () => {
+      for (const type of ["pointerdown", "wheel", "keydown"]) container.removeEventListener(type, touched);
       observer?.disconnect();
       for (const host of hosts.current.values()) host.observer?.disconnect();
       hosts.current.clear();
@@ -526,8 +592,8 @@ export default function HazardMap() {
     if (hostsChanged) setHostVersion((v) => v + 1);
     if (refitNext.current) {
       refitNext.current = false;
-      if (points.length > 0) map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 16, animate: false });
-      else map.setView(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: false });
+      userMoved.current = false;
+      fitPins(map, markers.current, fitSize, points);
     }
     // Keep the selection if its hazard is still there, else drop it.
     setSelection((s) => (s.id !== null && !markers.current.has(s.id) ? { id: null, source: "load", n: s.n + 1 } : s));
@@ -546,6 +612,7 @@ export default function HazardMap() {
       map?.closePopup();
       return;
     }
+    userMoved.current = true;
     if (selection.source === "pin") {
       itemEls.current.get(selection.id)?.scrollIntoView({ block: "nearest" });
     } else if (selection.source === "list") {
@@ -673,6 +740,7 @@ export default function HazardMap() {
           </span>
         )}
       </div>
+      {data.state === "ready" && data.items.length > 0 && <StatStrip items={data.items} />}
       {loading && <p data-testid="hazard-map-loading" className="rs-hint-text">Loading hazards...</p>}
       {data.state === "error" && (
         <p data-testid="hazard-map-error" role="alert" className="rs-alert">
@@ -685,7 +753,10 @@ export default function HazardMap() {
         </p>
       )}
       {data.state === "ready" && data.items.length === 0 && (
-        <p data-testid="hazard-map-empty" className="rs-empty">{filter ? `No hazards with status ${statusText(filter)}` : "No hazards yet"}</p>
+        <p data-testid="hazard-map-empty" className="rs-empty">
+          <Icon name="pin" size={28} />
+          {filter ? `No hazards with status ${statusText(filter)}` : "No hazards yet"}
+        </p>
       )}
 
       <div className="rs-map-layout">
@@ -719,10 +790,16 @@ export default function HazardMap() {
                 >
                   <Thumb hazard={h} />
                   <span className="rs-list-body">
-                    <strong data-testid="hazard-list-class" className="rs-pill">{h.hazard_class}</strong>
+                    <strong data-testid="hazard-list-class" className="rs-pill">
+                      <ClassIcon hazardClass={h.hazard_class} />
+                      {h.hazard_class}
+                    </strong>
                     {h.class_edited && <EditedMark testid="hazard-class-edited" was={h.original_hazard_class} />}
                     <br />
-                    <span data-testid="hazard-list-severity" className="rs-pill rs-sev" data-severity={h.severity}>Severity {severityText(h.severity)}</span>
+                    <span data-testid="hazard-list-severity" className="rs-pill rs-sev" data-severity={h.severity}>
+                      <SeverityMeter level={h.severity} />
+                      Severity {severityText(h.severity)}
+                    </span>
                     {h.severity_edited && <EditedMark testid="hazard-severity-edited" was={h.original_severity} />}
                     <br />
                     <StatusBadge status={h.status} testid="hazard-list-status" />

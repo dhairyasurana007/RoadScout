@@ -188,7 +188,7 @@ async function mockApi(page, items = fresh()) {
     ctl.agencyHits.push(route.request().url());
     return route.abort();
   });
-  await page.route(/openstreetmap\.org/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
+  await page.route(/openstreetmap\.org|cartocdn\.com/, (route) => route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }));
   await page.route(
     (url) => url.pathname === "/api/hazards",
     (route) => route.fulfill({ status: 200, json: ctl.items.map((h) => ({ ...h })) }),
@@ -847,7 +847,7 @@ test("a full walk through the report makes no request to any VDOT, Maryland or S
   for (const patch of ctl.patches) expect(Object.keys(patch.body).every((k) => ["agency", "status"].includes(k))).toBe(true);
   // the only non-local requests are the map tiles
   const external = ctl.requests.filter((u) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(u) && !u.startsWith("data:") && !u.startsWith("blob:"));
-  expect(external.every((u) => /openstreetmap\.org/.test(u))).toBe(true);
+  expect(external.every((u) => /openstreetmap\.org|cartocdn\.com/.test(u))).toBe(true);
 });
 
 test("the report buttons are plain buttons and links, not a form that could post anywhere", async ({ page }) => {

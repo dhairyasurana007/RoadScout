@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDemo } from "./demo.jsx";
+import { Icon } from "./icons.jsx";
 
 // The prefilled agency report of one approved hazard (task 18). Everything shown comes from
 // GET /api/hazards/{id}/report. The panel never submits anything anywhere: the only outbound thing is the
@@ -299,11 +300,13 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
             Prefilled report for hazard {hazardId}
           </h3>
           <button type="button" data-testid="report-close" aria-label="Close report" onClick={onClose}>
+            <Icon name="close" size={16} />
             Close
           </button>
         </div>
         <p className="rs-report-banner" data-testid="report-banner" role="note">
-          {NOTHING_SUBMITTED}
+          <Icon name="shield" size={20} />
+          <span>{NOTHING_SUBMITTED}</span>
         </p>
 
         {state.phase === "loading" && <p data-testid="report-loading">Loading report...</p>}
@@ -411,18 +414,22 @@ export default function ReportPanel({ hazardId, ctx, onClose }) {
 
             <div className="rs-report-actions" role="group" aria-label="Report actions">
               <button type="button" data-testid="report-copy" disabled={copy.state === "copying" || refreshing || busy} onClick={copyReport}>
+                <Icon name="copy" size={16} />
                 Copy report
               </button>
               <a data-testid="report-download-text" href={report.text_download_url} download>
+                <Icon name="download" size={16} />
                 Download report
               </a>
               {report.photo_download_url && (
                 <a data-testid="report-download-photo" href={report.photo_download_url} download>
+                  <Icon name="download" size={16} />
                   Download photo
                 </a>
               )}
               {report.form_url && (
                 <a data-testid="report-open-form" href={report.form_url} target="_blank" rel="noopener noreferrer">
+                  <Icon name="external" size={16} />
                   Open official form
                 </a>
               )}
